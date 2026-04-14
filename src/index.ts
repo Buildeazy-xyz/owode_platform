@@ -1,7 +1,9 @@
+import walletRoutes from './routes/wallet.routes'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
+import userRoutes from './routes/user.routes'
 
 // Load environment variables
 dotenv.config()
@@ -14,7 +16,11 @@ app.use(helmet())
 app.use(cors())
 app.use(express.json())
 
-// Health check route — tells you the server is alive
+// Routes
+app.use('/api/users', userRoutes)
+app.use('/api/wallet', walletRoutes)
+
+// Health check route
 app.get('/', (req, res) => {
   res.json({
     message: '🚀 OWODE Alajo Platform API is running!',
