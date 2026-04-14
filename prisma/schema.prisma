@@ -1,0 +1,43 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id          String   @id @default(uuid())
+  fullName    String
+  phone       String   @unique
+  email       String?  @unique
+  bvn         String?  @unique
+  nin         String?  @unique
+  pin         String
+  role        Role     @default(CONTRIBUTOR)
+  isVerified  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  wallet      Wallet?
+}
+
+enum Role {
+  CONTRIBUTOR
+  AGENT
+  ADMIN
+}
+
+model Wallet {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  balance      Float    @default(0)
+  totalSaved   Float    @default(0)
+  totalPayout  Float    @default(0)
+  isLocked     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+}
