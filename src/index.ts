@@ -4,6 +4,7 @@ import cors from 'cors'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
 import userRoutes from './routes/user.routes'
+import ajoRoutes from './routes/ajo.routes'
 
 // Load environment variables
 dotenv.config()
@@ -20,6 +21,8 @@ app.use(express.json())
 app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
 
+
+app.use('/api/ajo', ajoRoutes)
 // Health check route
 app.get('/', (req, res) => {
   res.json({

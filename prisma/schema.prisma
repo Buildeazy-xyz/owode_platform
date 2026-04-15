@@ -68,26 +68,29 @@ enum TransactionStatus {
 }
 
 model AjoGroup {
-  id              String   @id @default(uuid())
-  name            String
-  amount          Float
-  frequency       Frequency
-  totalMembers    Int
-  currentCycle    Int      @default(0)
-  isActive        Boolean  @default(true)
-  createdBy       String
-  createdAt       DateTime @default(now())
+  id           String      @id @default(uuid())
+  name         String      @unique
+  amount       Float
+  frequency    Frequency
+  totalMembers Int
+  currentCycle Int         @default(0)
+  isActive     Boolean     @default(true)
+  createdBy    String
+  createdAt    DateTime    @default(now())
+
+  members      AjoMember[]
 }
 
 model AjoMember {
-  id          String   @id @default(uuid())
-  groupId     String
-  userId      String
-  position    Int
-  hasPaid     Boolean  @default(false)
-  createdAt   DateTime @default(now())
-}
+  id        String   @id @default(uuid())
+  groupId   String
+  userId    String
+  position  Int
+  hasPaid   Boolean  @default(false)
+  createdAt DateTime @default(now())
 
+  group     AjoGroup @relation(fields: [groupId], references: [id])
+}
 enum Frequency {
   DAILY
   WEEKLY
