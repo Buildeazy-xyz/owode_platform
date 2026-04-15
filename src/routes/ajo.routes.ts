@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express'
-import { createAjoGroup, joinAjoGroup, getAllGroups, getGroupById } from '../services/ajo.service'
 import { protect } from '../middleware/auth.middleware'
-
+import { createAjoGroup, joinAjoGroup, getAllGroups, getGroupById, makeContribution } from '../services/ajo.service'
 const router = Router()
 
 // POST /api/ajo/create — create a new ajo group
@@ -89,6 +88,33 @@ router.get('/groups/:id', protect, async (req: any, res: Response) => {
   try {
     const group = await getGroupById(req.params.id)
     res.status(200).json({ success: true, data: group })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
+
+
+// POST /api/ajo/contribute — make a contribution
+router.post('/contribute', protect, async (req: any, res: Response) => {
+  try {
+    const { groupId } = req.body
+
+    if (!groupId) {
+      res.status(400).json({ success: false, message: 'groupId is required' })
+      return
+    }
+
+    const result = await makeContribution({
+      groupId,
+      userId: req.user.userId
+    })
+
+    res.status(200).json({
+      success: true,
+      message: 'Contribution successful',
+      data: result
+    })
+
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
   }
