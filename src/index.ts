@@ -5,7 +5,8 @@ import helmet from 'helmet'
 import dotenv from 'dotenv'
 import userRoutes from './routes/user.routes'
 import ajoRoutes from './routes/ajo.routes'
-
+import agentRoutes from './routes/agent.routes'
+import { protect } from './middleware/auth.middleware'
 // Load environment variables
 dotenv.config()
 
@@ -20,6 +21,9 @@ app.use(express.json())
 // Routes
 app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
+app.use('/api/agent', agentRoutes)
+
+// DEBUG ROUTE — remove later
 
 
 app.use('/api/ajo', ajoRoutes)
@@ -37,5 +41,7 @@ const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`✅ OWODE Server running on port ${PORT}`)
 })
+
+
 
 export default app
