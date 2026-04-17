@@ -1,5 +1,5 @@
 import { prisma } from '../config/database'
-
+import { notify } from './notification.service'
 // Create a new Ajo group
 export const createAjoGroup = async (data: {
   name: string
@@ -217,14 +217,38 @@ export const makeContribution = async (data: {
           data: { hasPaid: false }
         })
 
-        return {
-          contributed: true,
-          allPaid: true,
-          payoutSent: true,
-          payoutTo: recipient.userId,
-          payoutAmount: totalPayout,
-          nextCycle: group.currentCycle + 1
-        }
+       // Send contribution notification
+  const contributor = await prisma.user.findUnique({ where: { id: data.userId } })
+  if (contributor) {
+    await notify.contributionMade({
+      phone: contributor.phone,
+      email: contributor.email,
+      amount: group.amount,
+      groupName: group.name,
+      fullName: contributor.fullName
+    })
+  }
+
+  // Send payout notification to recipient
+  const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
+  if (recipientUser) {
+    await notify.ajoPayout({
+      phone: recipientUser.phone,
+      email: recipientUser.email,
+      amount: totalPayout,
+      groupName: group.name,
+      fullName: recipientUser.fullName
+    })
+  }
+
+  return {
+    contributed: true,
+    allPaid: true,
+    payoutSent: true,
+    payoutTo: recipient.userId,
+    payoutAmount: totalPayout,
+    nextCycle: group.currentCycle + 1
+  }
       }
     }
   }

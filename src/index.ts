@@ -8,6 +8,7 @@ import ajoRoutes from './routes/ajo.routes'
 import agentRoutes from './routes/agent.routes'
 import { protect } from './middleware/auth.middleware'
 import kycRoutes from './routes/kyc.routes'
+import notificationRoutes from './routes/notification.routes'
 
 // Load environment variables
 dotenv.config()
@@ -25,6 +26,7 @@ app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
 app.use('/api/agent', agentRoutes)
 app.use('/api/kyc', kycRoutes)
+app.use('/api/notifications', notificationRoutes)
 
 // DEBUG ROUTE — remove later
 

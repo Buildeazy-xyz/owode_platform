@@ -1,5 +1,5 @@
 import { prisma } from '../config/database'
-
+import { notify } from './notification.service'
 // Submit BVN for verification
 export const submitBVN = async (data: {
   userId: string
@@ -73,10 +73,9 @@ export const submitNIN = async (data: {
 }
 
 // Verify a user — called after BVN/NIN is confirmed
+// Verify a user — called after BVN/NIN is confirmed
 export const verifyUser = async (userId: string) => {
-  const user = await prisma.user.findUnique({
-    where: { id: userId }
-  })
+  const user = await prisma.user.findUnique({ where: { id: userId } })
 
   if (!user) throw new Error('User not found')
   if (!user.bvn && !user.nin) {
@@ -86,6 +85,13 @@ export const verifyUser = async (userId: string) => {
   const updatedUser = await prisma.user.update({
     where: { id: userId },
     data: { isVerified: true }
+  })
+
+  // Send notification
+  await notify.kycVerified({
+    phone: updatedUser.phone,
+    email: updatedUser.email,
+    fullName: updatedUser.fullName
   })
 
   return {
