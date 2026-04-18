@@ -47,20 +47,15 @@ router.post('/debit', protect, async (req: any, res: Response) => {
 // POST /api/wallet/transfer
 router.post('/transfer', protect, async (req: any, res: Response) => {
   try {
-    const { recipientPhone, amount, description } = req.body
-    if (!recipientPhone || !amount || !description) {
-      res.status(400).json({ success: false, message: 'recipientPhone, amount and description are required' })
+    const { recipientPhone, amount, description, transactionPin } = req.body
+    if (!recipientPhone || !amount || !description || !transactionPin) {
+      res.status(400).json({ success: false, message: 'recipientPhone, amount, description and transactionPin are required' })
       return
     }
-    const result = await transferFunds(req.user.userId, recipientPhone, amount, description)
-    res.status(200).json({
-      success: true,
-      message: `₦${amount.toLocaleString()} sent to ${result.recipient} successfully!`,
-      data: result
-    })
+    const result = await transferFunds(req.user.userId, recipientPhone, amount, description, transactionPin)
+    res.status(200).json({ success: true, message: `₦${amount.toLocaleString()} sent successfully!`, data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
   }
 })
-
 export default router

@@ -121,8 +121,18 @@ export const transferFunds = async (
   senderId: string,
   recipientPhone: string,
   amount: number,
-  description: string
+  description: string,
+  transactionPin: string
 ) => {
+  // Verify transaction PIN first
+  const sender = await prisma.user.findUnique({ where: { id: senderId } })
+  if (!sender) throw new Error('Sender not found')
+
+  const bcrypt = require('bcryptjs')
+  const isPinValid = await bcrypt.compare(transactionPin, sender.transactionPin)
+  if (!isPinValid) throw new Error('Invalid transaction PIN')
+
+  // Rest of transfer logic stays the same...=> {
   if (amount <= 0) throw new Error('Amount must be greater than 0')
   if (amount < 100) throw new Error('Minimum transfer amount is ₦100')
 

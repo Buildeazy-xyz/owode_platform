@@ -7,20 +7,22 @@ datasource db {
 }
 
 model User {
-  id          String   @id @default(uuid())
-  fullName    String
-  phone       String   @unique
-  email       String?  @unique
-  bvn         String?  @unique
-  nin         String?  @unique
-  pin         String
-  role        Role     @default(CONTRIBUTOR)
-  isVerified  Boolean  @default(false)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id              String   @id @default(uuid())
+  fullName        String
+  phone           String   @unique
+  email           String?  @unique
+  bvn             String?  @unique
+  nin             String?  @unique
+  password        String?
+  appPin          String?
+  transactionPin  String
+  role            Role     @default(CONTRIBUTOR)
+  isVerified      Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  wallet      Wallet?
+  wallet          Wallet?
 }
 
 enum Role {
