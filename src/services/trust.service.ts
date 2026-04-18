@@ -78,3 +78,45 @@ export const isEligibleForGuaranteedAjo = async (userId: string): Promise<boolea
   if (user.trustScore < 35) return false
   return true
 }
+// Add these functions to trust.service.ts
+
+// Full risk assessment for group joining
+export const assessGroupRisk = async (groupId: string) => {
+  const group = await prisma.ajoGroup.findUnique({
+    where: { id: groupId },
+    include: {
+      members: {
+        include: { user: true }
+      }
+    }
+  })
+
+  if (!group) throw new Error('Group not found')
+
+  const realMembers = group.members.filter(m => !m.isAvatar)
+
+  // Calculate group risk score
+  const avgTrustScore = realMembers.length > 0
+    ? realMembers.reduce((sum, m) => sum + m.user.trustScore, 0) / realMembers.length
+    : 0
+
+  const highRiskMembers = realMembers.filter(m => m.user.trustScore < 50).length
+  const lowRiskMembers = realMembers.filter(m => m.user.trustScore >= 65).length
+
+  return {
+    groupId,
+    averageTrustScore: avgTrustScore,
+    highRiskMembers,
+    lowRiskMembers,
+    riskLevel: avgTrustScore >= 65 ? 'LOW' : avgTrustScore >= 50 ? 'MEDIUM' : 'HIGH',
+    recommendation: highRiskMembers > lowRiskMembers
+      ? 'High risk group — Avatar coverage likely needed'
+      : 'Balanced group — Low default probability'
+  }
+}
+
+// Check if group has too many high risk members
+export const isGroupBalanced = async (groupId: string): Promise<boolean> => {
+  const assessment = await assessGroupRisk(groupId)
+  return assessment.highRiskMembers <= assessment.lowRiskMembers
+}

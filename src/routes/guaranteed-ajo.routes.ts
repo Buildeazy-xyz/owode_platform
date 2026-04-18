@@ -94,5 +94,15 @@ router.post('/check-defaults/:groupId', protect, async (req: any, res: Response)
     res.status(400).json({ success: false, message: error.message })
   }
 })
+import { assessGroupRisk } from '../services/trust.service'
 
+// GET /api/guaranteed-ajo/risk/:groupId
+router.get('/risk/:groupId', protect, async (req: any, res: Response) => {
+  try {
+    const assessment = await assessGroupRisk(req.params.groupId)
+    res.status(200).json({ success: true, data: assessment })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
 export default router
