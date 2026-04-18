@@ -14,8 +14,9 @@ model User {
   bvn             String?  @unique
   nin             String?  @unique
   password        String?
+  pin             String   @default("")
+  transactionPin  String   @default("")
   appPin          String?
-  transactionPin  String
   role            Role     @default(CONTRIBUTOR)
   isVerified      Boolean  @default(false)
   isActive        Boolean  @default(true)

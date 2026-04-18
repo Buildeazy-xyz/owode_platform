@@ -1,6 +1,7 @@
 import { prisma } from '../config/database'
 import { v4 as uuidv4 } from 'uuid'
 import { notify } from './notification.service'
+import bcrypt from 'bcryptjs'
 
 // Get wallet balance
 export const getWalletBalance = async (userId: string) => {
@@ -13,20 +14,12 @@ export const getWalletBalance = async (userId: string) => {
       }
     }
   })
-
-  if (!wallet) {
-    throw new Error('Wallet not found')
-  }
-
+  if (!wallet) throw new Error('Wallet not found')
   return wallet
 }
 
-// Credit wallet — add money
-export const creditWallet = async (
-  userId: string,
-  amount: number,
-  description: string
-) => {
+// Credit wallet
+export const creditWallet = async (userId: string, amount: number, description: string) => {
   if (amount <= 0) throw new Error('Amount must be greater than 0')
 
   const wallet = await prisma.wallet.findUnique({ where: { userId } })
@@ -53,7 +46,6 @@ export const creditWallet = async (
     })
   ])
 
-  // Send notification
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (user) {
     await notify.walletCredited({
@@ -68,12 +60,8 @@ export const creditWallet = async (
   return { wallet: updatedWallet, transaction }
 }
 
-// Debit wallet — remove money
-export const debitWallet = async (
-  userId: string,
-  amount: number,
-  description: string
-) => {
+// Debit wallet
+export const debitWallet = async (userId: string, amount: number, description: string) => {
   if (amount <= 0) throw new Error('Amount must be greater than 0')
 
   const wallet = await prisma.wallet.findUnique({ where: { userId } })
@@ -101,7 +89,6 @@ export const debitWallet = async (
     })
   ])
 
-  // Send notification
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (user) {
     await notify.walletDebited({
@@ -116,7 +103,7 @@ export const debitWallet = async (
   return { wallet: updatedWallet, transaction }
 }
 
-// Transfer money between OWODE users
+// Transfer funds between users
 export const transferFunds = async (
   senderId: string,
   recipientPhone: string,
@@ -124,27 +111,23 @@ export const transferFunds = async (
   description: string,
   transactionPin: string
 ) => {
-  // Verify transaction PIN first
-  const sender = await prisma.user.findUnique({ where: { id: senderId } })
-  if (!sender) throw new Error('Sender not found')
-
-  const bcrypt = require('bcryptjs')
-  const isPinValid = await bcrypt.compare(transactionPin, sender.transactionPin)
-  if (!isPinValid) throw new Error('Invalid transaction PIN')
-
-  // Rest of transfer logic stays the same...=> {
   if (amount <= 0) throw new Error('Amount must be greater than 0')
   if (amount < 100) throw new Error('Minimum transfer amount is ₦100')
 
+  // Find sender and verify transaction PIN
+  const senderUser = await prisma.user.findUnique({ where: { id: senderId } })
+  if (!senderUser) throw new Error('Sender not found')
+
+  const isPinValid = await bcrypt.compare(transactionPin, senderUser.transactionPin)
+  if (!isPinValid) throw new Error('Invalid transaction PIN')
+
   // Find sender wallet
-  const senderWallet = await prisma.wallet.findUnique({
-    where: { userId: senderId }
-  })
+  const senderWallet = await prisma.wallet.findUnique({ where: { userId: senderId } })
   if (!senderWallet) throw new Error('Sender wallet not found')
   if (senderWallet.isLocked) throw new Error('Your wallet is locked')
   if (senderWallet.balance < amount) throw new Error('Insufficient balance')
 
-  // Find recipient by phone
+  // Find recipient
   const recipient = await prisma.user.findUnique({
     where: { phone: recipientPhone },
     include: { wallet: true }
@@ -154,17 +137,11 @@ export const transferFunds = async (
   if (recipient.wallet.isLocked) throw new Error('Recipient wallet is locked')
   if (recipient.id === senderId) throw new Error('You cannot transfer to yourself')
 
-  // Get sender details
-  const sender = await prisma.user.findUnique({ where: { id: senderId } })
-  if (!sender) throw new Error('Sender not found')
-
   const senderNewBalance = senderWallet.balance - amount
   const recipientNewBalance = recipient.wallet.balance + amount
   const reference = `TRF-${Date.now()}-${senderId.slice(0, 8)}`
 
-  // Execute transfer atomically
   await prisma.$transaction([
-    // Debit sender
     prisma.wallet.update({
       where: { userId: senderId },
       data: { balance: senderNewBalance, totalPayout: senderWallet.totalPayout + amount }
@@ -180,7 +157,6 @@ export const transferFunds = async (
         status: 'SUCCESS'
       }
     }),
-    // Credit recipient
     prisma.wallet.update({
       where: { userId: recipient.id },
       data: { balance: recipientNewBalance, totalSaved: recipient.wallet.totalSaved + amount }
@@ -191,20 +167,19 @@ export const transferFunds = async (
         type: 'CREDIT',
         amount,
         balance: recipientNewBalance,
-        description: `Transfer from ${sender.fullName} — ${description}`,
+        description: `Transfer from ${senderUser.fullName} — ${description}`,
         reference: `${reference}-IN`,
         status: 'SUCCESS'
       }
     })
   ])
 
-  // Send notifications to both
   await notify.walletDebited({
-    phone: sender.phone,
-    email: sender.email,
+    phone: senderUser.phone,
+    email: senderUser.email,
     amount,
     balance: senderNewBalance,
-    fullName: sender.fullName
+    fullName: senderUser.fullName
   })
 
   await notify.walletCredited({

@@ -2,31 +2,22 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../config/database'
 
-// Register a new user
 export const registerUser = async (data: {
   fullName: string
   phone: string
   email?: string
   password: string
-  transactionPin: string
   role?: 'CONTRIBUTOR' | 'AGENT' | 'ADMIN'
 }) => {
   const existingUser = await prisma.user.findUnique({ where: { phone: data.phone } })
   if (existingUser) throw new Error('Phone number already registered')
 
-  // Validate password — must have letters and numbers
   const passwordRegex = /^(?=.*[a-zA-Z])(?=.*[0-9]).{6,}$/
   if (!passwordRegex.test(data.password)) {
     throw new Error('Password must be at least 6 characters with letters and numbers')
   }
 
-  // Validate transaction PIN — must be 4 digits
-  if (data.transactionPin.length !== 4 || isNaN(Number(data.transactionPin))) {
-    throw new Error('Transaction PIN must be exactly 4 digits')
-  }
-
   const hashedPassword = await bcrypt.hash(data.password, 10)
-  const hashedTransactionPin = await bcrypt.hash(data.transactionPin, 10)
 
   const user = await prisma.user.create({
     data: {
@@ -34,11 +25,10 @@ export const registerUser = async (data: {
       phone: data.phone,
       email: data.email,
       password: hashedPassword,
-      transactionPin: hashedTransactionPin,
+      pin: '',
+      transactionPin: '',
       role: data.role || 'CONTRIBUTOR',
-      wallet: {
-        create: { balance: 0, totalSaved: 0, totalPayout: 0 }
-      }
+      wallet: { create: { balance: 0, totalSaved: 0, totalPayout: 0 } }
     },
     include: { wallet: true }
   })
@@ -57,13 +47,13 @@ export const registerUser = async (data: {
       email: user.email,
       role: user.role,
       isVerified: user.isVerified,
+      hasTransactionPin: false,
       wallet: user.wallet
     },
     token
   }
 }
 
-// Login with password
 export const loginUser = async (data: { phone: string; password: string }) => {
   const user = await prisma.user.findUnique({
     where: { phone: data.phone },
@@ -91,13 +81,25 @@ export const loginUser = async (data: { phone: string; password: string }) => {
       email: user.email,
       role: user.role,
       isVerified: user.isVerified,
+      hasTransactionPin: user.transactionPin !== '',
       wallet: user.wallet
     },
     token
   }
 }
 
-// Set app PIN (6 digits) — for opening app
+export const setTransactionPin = async (userId: string, transactionPin: string) => {
+  if (transactionPin.length !== 4 || isNaN(Number(transactionPin))) {
+    throw new Error('Transaction PIN must be exactly 4 digits')
+  }
+  const hashedPin = await bcrypt.hash(transactionPin, 10)
+  await prisma.user.update({
+    where: { id: userId },
+    data: { transactionPin: hashedPin }
+  })
+  return { message: 'Transaction PIN set successfully' }
+}
+
 export const setAppPin = async (userId: string, appPin: string) => {
   if (appPin.length !== 6 || isNaN(Number(appPin))) {
     throw new Error('App PIN must be exactly 6 digits')
@@ -107,7 +109,6 @@ export const setAppPin = async (userId: string, appPin: string) => {
   return { message: 'App PIN set successfully' }
 }
 
-// Verify app PIN
 export const verifyAppPin = async (userId: string, appPin: string) => {
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (!user || !user.appPin) throw new Error('App PIN not set')
@@ -116,10 +117,10 @@ export const verifyAppPin = async (userId: string, appPin: string) => {
   return { valid: true }
 }
 
-// Verify transaction PIN
 export const verifyTransactionPin = async (userId: string, transactionPin: string) => {
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (!user) throw new Error('User not found')
+  if (!user.transactionPin) throw new Error('Transaction PIN not set')
   const isValid = await bcrypt.compare(transactionPin, user.transactionPin)
   if (!isValid) throw new Error('Invalid transaction PIN')
   return { valid: true }
