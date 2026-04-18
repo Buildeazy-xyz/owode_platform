@@ -88,17 +88,18 @@ router.get('/users', protect, adminOnly, async (req: any, res: Response) => {
       orderBy: { createdAt: 'desc' },
       include: { wallet: true }
     })
-    const safeUsers = users.map(u => ({
-      id: u.id,
-      fullName: u.fullName,
-      phone: u.phone,
-      email: u.email,
-      role: u.role,
-      isVerified: u.isVerified,
-      isActive: u.isActive,
-      createdAt: u.createdAt,
-      wallet: u.wallet
-    }))
+  const safeUsers = users.map(u => ({
+  id: u.id,
+  fullName: u.fullName,
+  phone: u.phone,
+  email: u.email,
+  role: u.role,
+  isVerified: u.isVerified,
+  isActive: u.isActive,
+  trustScore: u.trustScore,
+  createdAt: u.createdAt,
+  wallet: u.wallet
+}))
     res.status(200).json({ success: true, data: safeUsers })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
