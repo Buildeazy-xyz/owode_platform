@@ -17,20 +17,26 @@ const adminOnly = (req: any, res: Response, next: any) => {
 router.get('/stats', protect, adminOnly, async (req: any, res: Response) => {
   try {
     const [
-      totalUsers,
-      totalAgents,
-      totalGroups,
-      totalTransactions,
-      verifiedUsers,
-      activeGroups
-    ] = await Promise.all([
-      prisma.user.count({ where: { role: 'CONTRIBUTOR' } }),
-      prisma.user.count({ where: { role: 'AGENT' } }),
-      prisma.ajoGroup.count(),
-      prisma.transaction.count(),
-      prisma.user.count({ where: { isVerified: true } }),
-      prisma.ajoGroup.count({ where: { isActive: true } })
-    ])
+  totalUsers,
+  totalAgents,
+  totalGroups,
+  totalTransactions,
+  verifiedUsers,
+  activeGroups,
+  guaranteedGroups,
+  totalDefaults,
+  activeDefaults
+] = await Promise.all([
+  prisma.user.count({ where: { role: 'CONTRIBUTOR' } }),
+  prisma.user.count({ where: { role: 'AGENT' } }),
+  prisma.ajoGroup.count(),
+  prisma.transaction.count(),
+  prisma.user.count({ where: { isVerified: true } }),
+  prisma.ajoGroup.count({ where: { isActive: true } }),
+  prisma.ajoGroup.count({ where: { isGuaranteed: true } }),
+  prisma.defaultRecord.count(),
+  prisma.defaultRecord.count({ where: { recoveryStatus: { in: ['PENDING', 'SOFT_RECOVERY', 'HARD_RECOVERY'] } } })
+])
 
     // Total money in platform
     const wallets = await prisma.wallet.aggregate({
