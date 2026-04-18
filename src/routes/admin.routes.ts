@@ -1,0 +1,168 @@
+import { Router, Response } from 'express'
+import { prisma } from '../config/database'
+import { protect } from '../middleware/auth.middleware'
+
+const router = Router()
+
+// Middleware — admin only
+const adminOnly = (req: any, res: Response, next: any) => {
+  if (req.user.role !== 'ADMIN') {
+    res.status(403).json({ success: false, message: 'Admin access required' })
+    return
+  }
+  next()
+}
+
+// GET /api/admin/stats — platform overview
+router.get('/stats', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const [
+      totalUsers,
+      totalAgents,
+      totalGroups,
+      totalTransactions,
+      verifiedUsers,
+      activeGroups
+    ] = await Promise.all([
+      prisma.user.count({ where: { role: 'CONTRIBUTOR' } }),
+      prisma.user.count({ where: { role: 'AGENT' } }),
+      prisma.ajoGroup.count(),
+      prisma.transaction.count(),
+      prisma.user.count({ where: { isVerified: true } }),
+      prisma.ajoGroup.count({ where: { isActive: true } })
+    ])
+
+    // Total money in platform
+    const wallets = await prisma.wallet.aggregate({
+      _sum: { balance: true, totalSaved: true }
+    })
+
+    // Recent transactions
+    const recentTransactions = await prisma.transaction.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: { wallet: { include: { user: true } } }
+    })
+
+    // Daily transaction volume for last 7 days
+    const sevenDaysAgo = new Date()
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+
+    const dailyVolume = await prisma.transaction.groupBy({
+      by: ['createdAt'],
+      where: { createdAt: { gte: sevenDaysAgo }, status: 'SUCCESS' },
+      _sum: { amount: true },
+      _count: true
+    })
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalUsers,
+        totalAgents,
+        totalGroups,
+        totalTransactions,
+        verifiedUsers,
+        activeGroups,
+        totalBalance: wallets._sum.balance || 0,
+        totalSaved: wallets._sum.totalSaved || 0,
+        recentTransactions,
+        dailyVolume
+      }
+    })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/users
+router.get('/users', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { wallet: true }
+    })
+    const safeUsers = users.map(u => ({
+      id: u.id,
+      fullName: u.fullName,
+      phone: u.phone,
+      email: u.email,
+      role: u.role,
+      isVerified: u.isVerified,
+      isActive: u.isActive,
+      createdAt: u.createdAt,
+      wallet: u.wallet
+    }))
+    res.status(200).json({ success: true, data: safeUsers })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/transactions
+router.get('/transactions', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const transactions = await prisma.transaction.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { wallet: { include: { user: true } } }
+    })
+    res.status(200).json({ success: true, data: transactions })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/ajo-groups
+router.get('/ajo-groups', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const groups = await prisma.ajoGroup.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { members: true }
+    })
+    res.status(200).json({ success: true, data: groups })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/agents
+router.get('/agents', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const agents = await prisma.user.findMany({
+      where: { role: 'AGENT' },
+      include: { wallet: true }
+    })
+    res.status(200).json({ success: true, data: agents })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// POST /api/admin/wallet/lock/:userId
+router.post('/wallet/lock/:userId', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    await prisma.wallet.update({
+      where: { userId: req.params.userId },
+      data: { isLocked: true }
+    })
+    res.status(200).json({ success: true, message: 'Wallet locked successfully' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// POST /api/admin/wallet/unlock/:userId
+router.post('/wallet/unlock/:userId', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    await prisma.wallet.update({
+      where: { userId: req.params.userId },
+      data: { isLocked: false }
+    })
+    res.status(200).json({ success: true, message: 'Wallet unlocked successfully' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+export default router

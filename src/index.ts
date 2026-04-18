@@ -1,52 +1,63 @@
-import walletRoutes from './routes/wallet.routes'
-import express from 'express'
+import express, { Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import dotenv from 'dotenv'
 import userRoutes from './routes/user.routes'
+import walletRoutes from './routes/wallet.routes'
 import ajoRoutes from './routes/ajo.routes'
 import agentRoutes from './routes/agent.routes'
-import { protect } from './middleware/auth.middleware'
 import kycRoutes from './routes/kyc.routes'
 import notificationRoutes from './routes/notification.routes'
+import adminRoutes from './routes/admin.routes'
+import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
+import trustRoutes from './routes/trust.routes'
+import { protect } from './middleware/auth.middleware'
 
-// Load environment variables
 dotenv.config()
 
-// Create express app
 const app = express()
 
-// Middleware — security and request parsing
 app.use(helmet())
-app.use(cors())
+app.use(cors({
+  origin: ['http://localhost:3001', 'http://localhost:3000', 'http://192.168.88.21:3001'],
+  credentials: true
+}))
 app.use(express.json())
 
 // Routes
 app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
+app.use('/api/ajo', ajoRoutes)
 app.use('/api/agent', agentRoutes)
 app.use('/api/kyc', kycRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/admin', adminRoutes)
+app.use('/api/guaranteed-ajo', guaranteedAjoRoutes)
+app.use('/api/trust', trustRoutes)
 
-// DEBUG ROUTE — remove later
-
-
-app.use('/api/ajo', ajoRoutes)
-// Health check route
+// Health check
 app.get('/', (req, res) => {
   res.json({
     message: '🚀 OWODE Alajo Platform API is running!',
-    version: '1.0.0',
-    status: 'healthy'
+    version: '2.0.0',
+    status: 'healthy',
+    features: [
+      'User Auth',
+      'Wallet Engine',
+      'Standard Ajo',
+      'Guaranteed Ajo',
+      'Trust Score System',
+      'Avatar Coverage',
+      'Agent Service',
+      'KYC Service',
+      'Notifications'
+    ]
   })
 })
 
-// Start server
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`✅ OWODE Server running on port ${PORT}`)
 })
-
-
 
 export default app

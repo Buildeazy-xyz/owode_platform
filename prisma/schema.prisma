@@ -17,6 +17,7 @@ model User {
   pin             String   @default("")
   transactionPin  String   @default("")
   appPin          String?
+  trustScore      Float    @default(50)
   role            Role     @default(CONTRIBUTOR)
   isVerified      Boolean  @default(false)
   isActive        Boolean  @default(true)
@@ -24,6 +25,8 @@ model User {
   updatedAt       DateTime @updatedAt
 
   wallet          Wallet?
+  ajoMembers      AjoMember[]
+  defaultRecords  DefaultRecord[]
 }
 
 enum Role {
@@ -45,18 +48,19 @@ model Wallet {
   user         User          @relation(fields: [userId], references: [id])
   transactions Transaction[]
 }
+
 model Transaction {
-  id          String   @id @default(uuid())
+  id          String            @id @default(uuid())
   walletId    String
   type        TransactionType
   amount      Float
   balance     Float
   description String
-  reference   String   @unique
+  reference   String            @unique
   status      TransactionStatus @default(PENDING)
-  createdAt   DateTime @default(now())
+  createdAt   DateTime          @default(now())
 
-  wallet      Wallet   @relation(fields: [walletId], references: [id])
+  wallet      Wallet            @relation(fields: [walletId], references: [id])
 }
 
 enum TransactionType {
@@ -71,29 +75,101 @@ enum TransactionStatus {
 }
 
 model AjoGroup {
-  id           String      @id @default(uuid())
-  name         String      @unique
-  amount       Float
-  frequency    Frequency
-  totalMembers Int
-  currentCycle Int         @default(0)
-  isActive     Boolean     @default(true)
-  createdBy    String
-  createdAt    DateTime    @default(now())
+  id                  String      @id @default(uuid())
+  name                String      @unique
+  amount              Float
+  frequency           Frequency
+  totalMembers        Int
+  currentCycle        Int         @default(0)
+  isActive            Boolean     @default(true)
+  isGuaranteed        Boolean     @default(false)
+  guaranteeFee        Float       @default(0)
+  guaranteePoolBalance Float      @default(0)
+  avatarCoveredCount  Int         @default(0)
+  maxAvatarCoverage   Int         @default(2)
+  createdBy           String
+  startDate           DateTime?
+  nextPayoutDate      DateTime?
+  createdAt           DateTime    @default(now())
 
-  members      AjoMember[]
+  members             AjoMember[]
+  cycles              AjoCycle[]
+  defaultRecords      DefaultRecord[]
 }
 
 model AjoMember {
-  id        String   @id @default(uuid())
-  groupId   String
-  userId    String
-  position  Int
-  hasPaid   Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id              String      @id @default(uuid())
+  groupId         String
+  userId          String
+  position        Int
+  hasPaid         Boolean     @default(false)
+  isAvatar        Boolean     @default(false)
+  payoutReceived  Boolean     @default(false)
+  joinedAt        DateTime    @default(now())
 
-  group     AjoGroup @relation(fields: [groupId], references: [id])
+  group           AjoGroup    @relation(fields: [groupId], references: [id])
+  user            User        @relation(fields: [userId], references: [id])
+
+  @@unique([groupId, userId])
+  @@unique([groupId, position])
 }
+
+model AjoCycle {
+  id              String      @id @default(uuid())
+  groupId         String
+  cycleNumber     Int
+  recipientId     String
+  totalAmount     Float
+  avatarCovered   Boolean     @default(false)
+  avatarAmount    Float       @default(0)
+  status          CycleStatus @default(PENDING)
+  startedAt       DateTime    @default(now())
+  completedAt     DateTime?
+
+  group           AjoGroup    @relation(fields: [groupId], references: [id])
+}
+
+enum CycleStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  PAUSED
+}
+
+model DefaultRecord {
+  id              String        @id @default(uuid())
+  groupId         String
+  userId          String
+  cycleNumber     Int
+  amountOwed      Float
+  penaltyAmount   Float         @default(0)
+  avatarCovered   Boolean       @default(true)
+  recoveryStatus  RecoveryStatus @default(PENDING)
+  gracePeriodEnd  DateTime
+  createdAt       DateTime      @default(now())
+  recoveredAt     DateTime?
+
+  group           AjoGroup      @relation(fields: [groupId], references: [id])
+  user            User          @relation(fields: [userId], references: [id])
+}
+
+enum RecoveryStatus {
+  PENDING
+  SOFT_RECOVERY
+  HARD_RECOVERY
+  RECOVERED
+  WRITTEN_OFF
+}
+
+model GuaranteePool {
+  id              String   @id @default(uuid())
+  totalBalance    Float    @default(0)
+  totalCollected  Float    @default(0)
+  totalPaidOut    Float    @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
 enum Frequency {
   DAILY
   WEEKLY
