@@ -12,6 +12,7 @@ import adminRoutes from './routes/admin.routes'
 import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
 import trustRoutes from './routes/trust.routes'
 import { protect } from './middleware/auth.middleware'
+import recoveryRoutes from './routes/recovery.routes'
 
 dotenv.config()
 
