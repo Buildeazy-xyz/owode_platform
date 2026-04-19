@@ -207,8 +207,8 @@ export const makeContribution = async (data: {
         await prisma.ajoMember.updateMany({
           where: { groupId: data.groupId },
           data: { hasPaid: false }
+        })
 
-          
         const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
         const senderUser = await prisma.user.findUnique({ where: { id: data.userId } })
         if (recipientUser) {
