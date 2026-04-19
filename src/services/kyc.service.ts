@@ -25,10 +25,6 @@ export const submitBVN = async (data: {
     data: { bvn: data.bvn }
   })
 
-  // In production this is where you call a BVN verification API
-  // like Youverify, Smile Identity, or Prembly
-  // For now we simulate a successful verification
-
   return {
     id: user.id,
     fullName: user.fullName,
@@ -38,7 +34,8 @@ export const submitBVN = async (data: {
   }
 }
 
-// Submit NIN for verification
+ 
+  // For now we simulate a successful verification
 export const submitNIN = async (data: {
   userId: string
   nin: string

@@ -15,11 +15,11 @@ export const createGuaranteedGroup = async (data: {
   createdBy: string
 }) => {
   // Check if creator is eligible
-  const eligible = await isEligibleForGuaranteedAjo(data.createdBy)
-  if (!eligible) {
-    throw new Error('You must be verified with BVN/NIN and have a trust score above 35 to create a Guaranteed Ajo group')
-  }
-
+  // Replace eligibility check with:
+const creator = await prisma.user.findUnique({ where: { id: data.createdBy } })
+if (!creator) throw new Error('User not found')
+if (creator.trustScore < 35) throw new Error('Trust score too low to create Guaranteed Ajo group')
+  
   // Calculate guarantee fee (0.5% of contribution per cycle)
   const guaranteeFee = data.amount * 0.005
 
@@ -60,11 +60,10 @@ export const joinGuaranteedGroup = async (data: {
   userId: string
 }) => {
   // Check eligibility
-  const eligible = await isEligibleForGuaranteedAjo(data.userId)
-  if (!eligible) {
-    throw new Error('You must be verified with BVN/NIN and have a trust score above 35 to join a Guaranteed Ajo group')
-  }
-
+  // Replace the eligibility check in joinGuaranteedGroup with:
+const user = await prisma.user.findUnique({ where: { id: data.userId } })
+if (!user) throw new Error('User not found')
+if (user.trustScore < 35) throw new Error('Trust score too low to join Guaranteed Ajo')
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
     include: { members: { include: { user: true } } }
@@ -83,9 +82,6 @@ export const joinGuaranteedGroup = async (data: {
   if (alreadyJoined) throw new Error('You have already joined this group')
 
   // Get user trust score for smart positioning
-  const user = await prisma.user.findUnique({ where: { id: data.userId } })
-  if (!user) throw new Error('User not found')
-
   // Smart position assignment based on trust score
   // Higher trust score = earlier position (lower risk payout first)
   // Lower trust score = later position (must contribute more before receiving)

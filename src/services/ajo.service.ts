@@ -7,26 +7,36 @@ export const createAjoGroup = async (data: {
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY'
   totalMembers: number
   createdBy: string
+  isAdmin: boolean
 }) => {
-  // Check if group name already exists
+  // Only admins can create groups
+  if (!data.isAdmin) {
+    throw new Error('Only OWODE admins can create Ajo groups')
+  }
+
+  // Member limits: min 6, max 12 (excluding avatar in guaranteed)
+  if (data.totalMembers < 6) {
+    throw new Error('Minimum group size is 6 members')
+  }
+  if (data.totalMembers > 12) {
+    throw new Error('Maximum group size is 12 members')
+  }
+
   const existing = await prisma.ajoGroup.findFirst({
     where: { name: data.name }
   })
+  if (existing) throw new Error('Group name already exists')
 
-  if (existing) {
-    throw new Error('Group name already exists')
-  }
-
-  // Create the group
   const group = await prisma.ajoGroup.create({
     data: {
       name: data.name,
       amount: data.amount,
       frequency: data.frequency,
       totalMembers: data.totalMembers,
-      createdBy: data.createdBy,
       currentCycle: 0,
-      isActive: true
+      isActive: true,
+      isGuaranteed: false,
+      createdBy: data.createdBy
     }
   })
 
@@ -38,33 +48,23 @@ export const joinAjoGroup = async (data: {
   groupId: string
   userId: string
 }) => {
-  // Check if group exists
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
     include: { members: true }
   })
 
-  if (!group) {
-    throw new Error('Group not found')
+  if (!group) throw new Error('Group not found')
+  if (!group.isActive) throw new Error('Group is no longer active')
+
+  const realMembers = group.members.filter(m => !m.isAvatar)
+  if (realMembers.length >= group.totalMembers) {
+    throw new Error('Group is full — all slots are taken')
   }
 
-  if (!group.isActive) {
-    throw new Error('Group is no longer active')
-  }
-
-  // Check if group is full
-  if (group.members.length >= group.totalMembers) {
-    throw new Error('Group is full')
-  }
-
-  // Check if user already joined
   const alreadyJoined = group.members.find(m => m.userId === data.userId)
-  if (alreadyJoined) {
-    throw new Error('You have already joined this group')
-  }
+  if (alreadyJoined) throw new Error('You have already joined this group')
 
-  // Assign position based on how many members are already in
-  const position = group.members.length + 1
+  const position = realMembers.length + 1
 
   const member = await prisma.ajoMember.create({
     data: {
@@ -75,7 +75,18 @@ export const joinAjoGroup = async (data: {
     }
   })
 
-  return { member, group }
+  const spotsLeft = group.totalMembers - (realMembers.length + 1)
+
+  return {
+    member,
+    group,
+    position,
+    spotsLeft,
+    groupFull: spotsLeft === 0,
+    message: spotsLeft === 0
+      ? '🎉 Group is now full! Contributions can begin!'
+      : `✅ Joined! ${spotsLeft} spot${spotsLeft > 1 ? 's' : ''} remaining before contributions start`
+  }
 }
 
 // Get all active Ajo groups
@@ -107,7 +118,6 @@ export const makeContribution = async (data: {
   groupId: string
   userId: string
 }) => {
-  // Step 1 — Find the group
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
     include: { members: true }
@@ -116,33 +126,28 @@ export const makeContribution = async (data: {
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is no longer active')
 
-  // Step 2 — Find the member
-  const member = await prisma.ajoMember.findFirst({
-    where: { groupId: data.groupId, userId: data.userId }
-  })
+  // Check if group is full before allowing contributions
+  const realMembers = group.members.filter((m: any) => !m.isAvatar)
+  if (realMembers.length < group.totalMembers) {
+    const spotsLeft = group.totalMembers - realMembers.length
+    throw new Error(`Group is not full yet. ${spotsLeft} more member${spotsLeft > 1 ? 's' : ''} needed before contributions can start`)
+  }
 
+  const member = group.members.find((m: any) => m.userId === data.userId)
   if (!member) throw new Error('You are not a member of this group')
   if (member.hasPaid) throw new Error('You have already paid for this cycle')
 
-  // Step 3 — Debit the member's wallet
-  const wallet = await prisma.wallet.findUnique({
-    where: { userId: data.userId }
-  })
-
+  const wallet = await prisma.wallet.findUnique({ where: { userId: data.userId } })
   if (!wallet) throw new Error('Wallet not found')
-  if (wallet.isLocked) throw new Error('Wallet is locked')
-  if (wallet.balance < group.amount) throw new Error('Insufficient balance')
+  if (wallet.isLocked) throw new Error('Your wallet is locked')
+  if (wallet.balance < group.amount) throw new Error(`Insufficient balance. You need ₦${group.amount.toLocaleString()}`)
 
   const newBalance = wallet.balance - group.amount
 
-  // Step 4 — Debit wallet and create transaction
   await prisma.$transaction([
     prisma.wallet.update({
       where: { userId: data.userId },
-      data: {
-        balance: newBalance,
-        totalPayout: wallet.totalPayout + group.amount
-      }
+      data: { balance: newBalance, totalPayout: { increment: group.amount } }
     }),
     prisma.transaction.create({
       data: {
@@ -150,114 +155,104 @@ export const makeContribution = async (data: {
         type: 'DEBIT',
         amount: group.amount,
         balance: newBalance,
-        description: `Ajo contribution - ${group.name}`,
+        description: `Ajo contribution — ${group.name}`,
         reference: `AJO-${Date.now()}-${data.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
     }),
-    // Step 5 — Mark member as paid
     prisma.ajoMember.update({
       where: { id: member.id },
       data: { hasPaid: true }
     })
   ])
 
-  // Step 6 — Check if all members have paid
   const updatedMembers = await prisma.ajoMember.findMany({
     where: { groupId: data.groupId }
   })
 
-  const allPaid = updatedMembers.every(m => m.hasPaid)
+  const allPaid = updatedMembers.filter((m: any) => !m.isAvatar).every((m: any) => m.hasPaid)
 
-  // Step 7 — If all paid, pay out to the next person in line
   if (allPaid) {
     const nextPosition = (group.currentCycle % group.totalMembers) + 1
-    const recipient = updatedMembers.find(m => m.position === nextPosition)
+    const recipient = updatedMembers.find((m: any) => m.position === nextPosition)
 
     if (recipient) {
-      const recipientWallet = await prisma.wallet.findUnique({
-        where: { userId: recipient.userId }
-      })
-
+      const recipientWallet = await prisma.wallet.findUnique({ where: { userId: recipient.userId } })
       if (recipientWallet) {
         const totalPayout = group.amount * group.totalMembers
         const newRecipientBalance = recipientWallet.balance + totalPayout
 
         await prisma.$transaction([
-          // Credit recipient wallet
           prisma.wallet.update({
             where: { userId: recipient.userId },
-            data: {
-              balance: newRecipientBalance,
-              totalSaved: recipientWallet.totalSaved + totalPayout
-            }
+            data: { balance: newRecipientBalance, totalSaved: { increment: totalPayout } }
           }),
-          // Create payout transaction
           prisma.transaction.create({
             data: {
               walletId: recipientWallet.id,
               type: 'CREDIT',
               amount: totalPayout,
               balance: newRecipientBalance,
-              description: `Ajo payout - ${group.name} cycle ${group.currentCycle + 1}`,
+              description: `Ajo payout — ${group.name} cycle ${group.currentCycle + 1}`,
               reference: `PAYOUT-${Date.now()}-${recipient.userId.slice(0, 8)}`,
               status: 'SUCCESS'
             }
           }),
-          // Move to next cycle and reset all members hasPaid
           prisma.ajoGroup.update({
             where: { id: data.groupId },
-            data: { currentCycle: group.currentCycle + 1 }
+            data: { currentCycle: { increment: 1 } }
           })
         ])
 
-        // Reset all members hasPaid for next cycle
         await prisma.ajoMember.updateMany({
           where: { groupId: data.groupId },
           data: { hasPaid: false }
-        })
 
-       // Send contribution notification
-  const contributor = await prisma.user.findUnique({ where: { id: data.userId } })
-  if (contributor) {
-    await notify.contributionMade({
-      phone: contributor.phone,
-      email: contributor.email,
-      amount: group.amount,
-      groupName: group.name,
-      fullName: contributor.fullName
-    })
-  }
+          
+        const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
+        const senderUser = await prisma.user.findUnique({ where: { id: data.userId } })
+        if (recipientUser) {
+          await notify.ajoPayout({
+            phone: recipientUser.phone,
+            email: recipientUser.email,
+            amount: totalPayout,
+            groupName: group.name,
+            fullName: recipientUser.fullName
+          })
+        }
 
-  // Send payout notification to recipient
-  const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
-  if (recipientUser) {
-    await notify.ajoPayout({
-      phone: recipientUser.phone,
-      email: recipientUser.email,
-      amount: totalPayout,
-      groupName: group.name,
-      fullName: recipientUser.fullName
-    })
-  }
-
-  return {
-    contributed: true,
-    allPaid: true,
-    payoutSent: true,
-    payoutTo: recipient.userId,
-    payoutAmount: totalPayout,
-    nextCycle: group.currentCycle + 1
-  }
+        return {
+          contributed: true,
+          allPaid: true,
+          payoutSent: true,
+          payoutTo: recipient.userId,
+          payoutAmount: totalPayout,
+          nextCycle: group.currentCycle + 1
+        }
       }
     }
+  }
+
+  const paidCount = updatedMembers.filter((m: any) => !m.isAvatar && m.hasPaid).length
+  const remainingCount = updatedMembers.filter((m: any) => !m.isAvatar && !m.hasPaid).length
+
+  // Notify user
+  const user = await prisma.user.findUnique({ where: { id: data.userId } })
+  if (user) {
+    await notify.contributionMade({
+      phone: user.phone,
+      email: user.email,
+      amount: group.amount,
+      groupName: group.name,
+      fullName: user.fullName
+    })
   }
 
   return {
     contributed: true,
     allPaid: false,
     payoutSent: false,
-    paidCount: updatedMembers.filter(m => m.hasPaid).length,
-    remainingCount: updatedMembers.filter(m => !m.hasPaid).length
+    paidCount,
+    remainingCount
   }
 }

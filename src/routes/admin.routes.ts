@@ -121,15 +121,43 @@ router.get('/transactions', protect, adminOnly, async (req: any, res: Response) 
 })
 
 // GET /api/admin/ajo-groups
-router.get('/ajo-groups', protect, adminOnly, async (req: any, res: Response) => {
+// POST /api/admin/ajo/create — Admin creates Ajo group
+router.post('/ajo/create', protect, adminOnly, async (req: any, res: Response) => {
   try {
-    const groups = await prisma.ajoGroup.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: { members: true }
+    const { name, amount, frequency, totalMembers } = req.body
+
+    if (!name || !amount || !frequency || !totalMembers) {
+      res.status(400).json({ success: false, message: 'All fields required' })
+      return
+    }
+
+    if (totalMembers < 6 || totalMembers > 12) {
+      res.status(400).json({ success: false, message: 'Members must be between 6 and 12' })
+      return
+    }
+
+    const group = await prisma.ajoGroup.create({
+      data: {
+        name, amount, frequency, totalMembers,
+        currentCycle: 0, isActive: true,
+        isGuaranteed: false,
+        createdBy: req.user.userId
+      }
     })
-    res.status(200).json({ success: true, data: groups })
+
+    res.status(201).json({ success: true, message: 'Ajo group created!', data: group })
   } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message })
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
+
+router.delete('/ajo/:id', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    await prisma.ajoMember.deleteMany({ where: { groupId: req.params.id } })
+    await prisma.ajoGroup.delete({ where: { id: req.params.id } })
+    res.status(200).json({ success: true, message: 'Group deleted' })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
   }
 })
 
