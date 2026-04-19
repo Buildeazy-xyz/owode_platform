@@ -174,6 +174,16 @@ export const transferFunds = async (
     })
   ])
 
+
+  await notify.transactionAlert({
+      phone: recipient.phone,
+      email: recipient.email,
+      fullName: recipient.fullName,
+      type: 'CREDIT',
+      amount,
+      sender: senderUser.fullName
+    })
+
   await notify.walletDebited({
     phone: senderUser.phone,
     email: senderUser.email,
