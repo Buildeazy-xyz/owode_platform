@@ -161,6 +161,29 @@ router.delete('/ajo/:id', protect, adminOnly, async (req: any, res: Response) =>
   }
 })
 
+ // GET /api/admin/security-log
+router.get('/security-log', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    // Get recent login activities from transactions as proxy
+    const recentActivity = await prisma.user.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        isVerified: true,
+        trustScore: true,
+        updatedAt: true,
+        role: true
+      }
+    })
+    res.status(200).json({ success: true, data: recentActivity })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // GET /api/admin/agents
 router.get('/agents', protect, adminOnly, async (req: any, res: Response) => {
   try {

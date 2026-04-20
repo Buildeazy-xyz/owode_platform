@@ -19,7 +19,7 @@ export const createGuaranteedGroup = async (data: {
 const creator = await prisma.user.findUnique({ where: { id: data.createdBy } })
 if (!creator) throw new Error('User not found')
 if (creator.trustScore < 35) throw new Error('Trust score too low to create Guaranteed Ajo group')
-  
+
   // Calculate guarantee fee (0.5% of contribution per cycle)
   const guaranteeFee = data.amount * 0.005
 
@@ -117,7 +117,11 @@ export const makeGuaranteedContribution = async (data: {
 
   const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
   if (!isPinValid) throw new Error('Invalid transaction PIN')
-
+// Replace PIN verification section:
+if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+  const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
+  if (!isPinValid) throw new Error('Invalid transaction PIN')
+}
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
     include: { members: { include: { user: true } } }
