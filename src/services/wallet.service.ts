@@ -103,7 +103,6 @@ export const debitWallet = async (userId: string, amount: number, description: s
   return { wallet: updatedWallet, transaction }
 }
 
-// Transfer funds between users
 export const transferFunds = async (
   senderId: string,
   recipientPhone: string,
@@ -114,13 +113,17 @@ export const transferFunds = async (
   if (amount <= 0) throw new Error('Amount must be greater than 0')
   if (amount < 100) throw new Error('Minimum transfer amount is ₦100')
 
-  // Find sender and verify transaction PIN
   const senderUser = await prisma.user.findUnique({ where: { id: senderId } })
   if (!senderUser) throw new Error('Sender not found')
 
-  const isPinValid = await bcrypt.compare(transactionPin, senderUser.transactionPin)
-  if (!isPinValid) throw new Error('Invalid transaction PIN')
+  // Allow biometric auth bypass OR verify PIN
+  if (transactionPin !== 'BIOMETRIC_AUTH') {
+    if (!senderUser.transactionPin) throw new Error('Please set a transaction PIN first')
+    const isPinValid = await bcrypt.compare(transactionPin, senderUser.transactionPin)
+    if (!isPinValid) throw new Error('Invalid transaction PIN')
+  }
 
+  // Rest of transfer logic stays same...
   // Find sender wallet
   const senderWallet = await prisma.wallet.findUnique({ where: { userId: senderId } })
   if (!senderWallet) throw new Error('Sender wallet not found')
