@@ -13,8 +13,8 @@ import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
 import trustRoutes from './routes/trust.routes'
 import { protect } from './middleware/auth.middleware'
 import recoveryRoutes from './routes/recovery.routes'
+import faceVerificationRoutes from './routes/face-verification.routes'
 
-dotenv.config()
 
 const app = express()
 
@@ -35,6 +35,8 @@ app.use('/api/notifications', notificationRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/guaranteed-ajo', guaranteedAjoRoutes)
 app.use('/api/trust', trustRoutes)
+app.use('/api/face', faceVerificationRoutes)
+dotenv.config()
 
 // Health check
 app.get('/', (req, res) => {

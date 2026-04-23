@@ -121,6 +121,18 @@ router.get('/transactions', protect, adminOnly, async (req: any, res: Response) 
 })
 
 // GET /api/admin/ajo-groups
+router.get('/ajo-groups', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const groups = await prisma.ajoGroup.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { members: true }
+    })
+    res.status(200).json({ success: true, data: groups })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // POST /api/admin/ajo/create — Admin creates Ajo group
 router.post('/ajo/create', protect, adminOnly, async (req: any, res: Response) => {
   try {
