@@ -74,18 +74,18 @@ if (user.trustScore < 35) throw new Error('Trust score too low to join Guarantee
   if (!group.isGuaranteed) throw new Error('This is not a Guaranteed Ajo group')
 
   // Check if group is full (excluding avatar)
-  const realMembers = group.members.filter(m => !m.isAvatar)
+  const realMembers = group.members.filter((m: any) => !m.isAvatar)
   if (realMembers.length >= group.totalMembers - 1) throw new Error('Group is full')
 
   // Check if already joined
-  const alreadyJoined = group.members.find(m => m.userId === data.userId)
+  const alreadyJoined = group.members.find((m: any) => m.userId === data.userId)
   if (alreadyJoined) throw new Error('You have already joined this group')
 
   // Get user trust score for smart positioning
   // Smart position assignment based on trust score
   // Higher trust score = earlier position (lower risk payout first)
   // Lower trust score = later position (must contribute more before receiving)
-  const existingPositions = realMembers.map(m => m.position).sort((a, b) => a - b)
+  const existingPositions = realMembers.map((m: any) => m.position).sort((a, b) => a - b)
   let position = realMembers.length + 1
 
   // Risk ladder — low trust users get later positions
@@ -130,7 +130,7 @@ if (data.transactionPin !== 'BIOMETRIC_AUTH') {
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is paused or inactive')
 
-  const member = group.members.find(m => m.userId === data.userId)
+  const member = group.members.find((m: any) => m.userId === data.userId)
   if (!member) throw new Error('You are not a member of this group')
   if (member.hasPaid) throw new Error('You have already paid for this cycle')
 
@@ -188,8 +188,8 @@ if (data.transactionPin !== 'BIOMETRIC_AUTH') {
     where: { groupId: data.groupId }
   })
 
-  const realMembers = updatedMembers.filter(m => !m.isAvatar)
-  const allPaid = realMembers.every(m => m.hasPaid)
+  const realMembers = updatedMembers.filter((m: any) => !m.isAvatar)
+  const allPaid = realMembers.every((m: any) => m.hasPaid)
 
   if (allPaid) {
     return await processGuaranteedPayout(data.groupId, group, updatedMembers)
@@ -217,7 +217,7 @@ const processGuaranteedPayout = async (
   members: any[]
 ) => {
   const nextPosition = (group.currentCycle % (group.totalMembers - 1)) + 1
-  const recipient = members.find(m => m.position === nextPosition && !m.isAvatar)
+  const recipient = members.find((m: any) => m.position === nextPosition && !m.isAvatar)
 
   if (!recipient) throw new Error('No recipient found for this cycle')
 
@@ -295,7 +295,7 @@ const processGuaranteedPayout = async (
   }
 
   // Update trust scores for all members who paid
-  const paidMembers = members.filter(m => !m.isAvatar && m.hasPaid)
+  const paidMembers = members.filter((m: any) => !m.isAvatar && m.hasPaid)
   for (const m of paidMembers) {
     await updateTrustScore(m.userId)
   }
@@ -321,7 +321,7 @@ export const checkAndHandleDefaults = async (groupId: string) => {
 
   if (!group || !group.isActive) return
 
-  const unpaidMembers = group.members.filter(m => !m.isAvatar && !m.hasPaid)
+  const unpaidMembers = group.members.filter((m: any) => !m.isAvatar && !m.hasPaid)
   const results = []
 
   for (const member of unpaidMembers) {
@@ -379,7 +379,7 @@ export const getGuaranteedGroupDetails = async (groupId: string) => {
 
   return {
     ...group,
-    members: group.members.map(m => ({
+    members: group.members.map((m: any) => ({
       id: m.id,
       position: m.position,
       isAvatar: m.isAvatar,

@@ -56,12 +56,12 @@ export const joinAjoGroup = async (data: {
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is no longer active')
 
-  const realMembers = group.members.filter(m => !m.isAvatar)
+  const realMembers = group.members.filter((m: any) => !m.isAvatar)
   if (realMembers.length >= group.totalMembers) {
     throw new Error('Group is full — all slots are taken')
   }
 
-  const alreadyJoined = group.members.find(m => m.userId === data.userId)
+  const alreadyJoined = group.members.find((m: any) => m.userId === data.userId)
   if (alreadyJoined) throw new Error('You have already joined this group')
 
   const position = realMembers.length + 1

@@ -26,7 +26,7 @@ export const calculateTrustScore = async (userId: string): Promise<number> => {
   if (user.isVerified) score += 10
 
   // +5 for each completed Ajo group
-  const completedGroups = user.ajoMembers.filter(m => !m.group.isActive).length
+  const completedGroups = user.ajoMembers.filter((m: any) => !m.group.isActive).length
   score += Math.min(completedGroups * 5, 20)
 
   // -15 for each default
@@ -34,7 +34,7 @@ export const calculateTrustScore = async (userId: string): Promise<number> => {
   score -= defaults * 15
 
   // -5 for each unrecovered default
-  const unrecovered = user.defaultRecords.filter(d => d.recoveryStatus !== 'RECOVERED').length
+  const unrecovered = user.defaultRecords.filter((d: any) => d.recoveryStatus !== 'RECOVERED').length
   score -= unrecovered * 5
 
   // Clamp between 0 and 100
@@ -93,15 +93,15 @@ export const assessGroupRisk = async (groupId: string) => {
 
   if (!group) throw new Error('Group not found')
 
-  const realMembers = group.members.filter(m => !m.isAvatar)
+  const realMembers = group.members.filter((m: any) => !m.isAvatar)
 
   // Calculate group risk score
   const avgTrustScore = realMembers.length > 0
-    ? realMembers.reduce((sum, m) => sum + m.user.trustScore, 0) / realMembers.length
+    ? realMembers.reduce((sum: number, m: any) => sum + m.user.trustScore, 0) / realMembers.length
     : 0
 
-  const highRiskMembers = realMembers.filter(m => m.user.trustScore < 50).length
-  const lowRiskMembers = realMembers.filter(m => m.user.trustScore >= 65).length
+  const highRiskMembers = realMembers.filter((m: any) => m.user.trustScore < 50).length
+  const lowRiskMembers = realMembers.filter((m: any) => m.user.trustScore >= 65).length
 
   return {
     groupId,

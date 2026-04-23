@@ -88,11 +88,11 @@ router.get('/users', protect, adminOnly, async (req: any, res: Response) => {
       orderBy: { createdAt: 'desc' },
       include: { wallet: true }
     })
-  const safeUsers = users.map(u => ({
-  id: u.id,
-  fullName: u.fullName,
-  phone: u.phone,
-  email: u.email,
+  const safeUsers = users.map((u: any) => ({
+    id: u.id,
+    fullName: u.fullName,
+    phone: u.phone,
+    email: u.email,
   role: u.role,
   isVerified: u.isVerified,
   isActive: u.isActive,

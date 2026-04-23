@@ -96,7 +96,7 @@ export const getAllMembers = async () => {
   })
 
   // Never return PINs
-  return members.map(m => ({
+  return members.map((m: any) => ({
     id: m.id,
     fullName: m.fullName,
     phone: m.phone,
@@ -123,7 +123,7 @@ export const getAgentSummary = async (agentId: string) => {
     orderBy: { createdAt: 'desc' }
   })
 
-  const totalCollected = collections.reduce((sum, t) => sum + t.amount, 0)
+  const totalCollected = collections.reduce((sum: number, t: any) => sum + t.amount, 0)
 
   return {
     agent: agent.fullName,
