@@ -181,8 +181,8 @@ const makeGuaranteedContribution = async (data) => {
     if (allPaid) {
         return await processGuaranteedPayout(data.groupId, group, updatedMembers);
     }
-    const paidCount = realMembers.filter(m => m.hasPaid).length;
-    const remainingCount = realMembers.filter(m => !m.hasPaid).length;
+    const paidCount = realMembers.filter((m) => m.hasPaid).length;
+    const remainingCount = realMembers.filter((m) => !m.hasPaid).length;
     return {
         contributed: true,
         allPaid: false,

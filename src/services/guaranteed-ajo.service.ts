@@ -85,7 +85,7 @@ if (user.trustScore < 35) throw new Error('Trust score too low to join Guarantee
   // Smart position assignment based on trust score
   // Higher trust score = earlier position (lower risk payout first)
   // Lower trust score = later position (must contribute more before receiving)
-  const existingPositions = realMembers.map((m: any) => m.position).sort((a, b) => a - b)
+  const existingPositions = realMembers.map((m: any) => m.position).sort((a: number, b: number) => a - b)
   let position = realMembers.length + 1
 
   // Risk ladder — low trust users get later positions
@@ -195,8 +195,8 @@ if (data.transactionPin !== 'BIOMETRIC_AUTH') {
     return await processGuaranteedPayout(data.groupId, group, updatedMembers)
   }
 
-  const paidCount = realMembers.filter(m => m.hasPaid).length
-  const remainingCount = realMembers.filter(m => !m.hasPaid).length
+  const paidCount = realMembers.filter((m: any) => m.hasPaid).length
+  const remainingCount = realMembers.filter((m: any) => !m.hasPaid).length
 
   return {
     contributed: true,
