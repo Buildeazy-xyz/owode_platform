@@ -20,7 +20,12 @@ const app = express()
 
 app.use(helmet())
 app.use(cors({
-  origin: ['http://localhost:3001', 'http://localhost:3000', 'http://192.168.88.21:3001'],
+  origin: [
+    'http://localhost:3001',
+    'https://owode.xyz',
+    'https://www.owode.xyz',
+    'https://owodeplatform-production.up.railway.app'
+  ],
   credentials: true
 }))
 app.use(express.json())
