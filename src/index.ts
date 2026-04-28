@@ -1,7 +1,9 @@
+import dotenv from 'dotenv'
+dotenv.config()
+
 import express, { Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
-import dotenv from 'dotenv'
 import userRoutes from './routes/user.routes'
 import walletRoutes from './routes/wallet.routes'
 import ajoRoutes from './routes/ajo.routes'
@@ -11,10 +13,8 @@ import notificationRoutes from './routes/notification.routes'
 import adminRoutes from './routes/admin.routes'
 import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
 import trustRoutes from './routes/trust.routes'
-import { protect } from './middleware/auth.middleware'
 import recoveryRoutes from './routes/recovery.routes'
 import faceVerificationRoutes from './routes/face-verification.routes'
-
 
 const app = express()
 
@@ -26,11 +26,13 @@ app.use(cors({
     'https://www.owode.xyz',
     'https://owodeplatform-production.up.railway.app'
   ],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }))
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true }))
 
-// Routes
 app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
 app.use('/api/ajo', ajoRoutes)
@@ -40,27 +42,19 @@ app.use('/api/notifications', notificationRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/guaranteed-ajo', guaranteedAjoRoutes)
 app.use('/api/trust', trustRoutes)
+app.use('/api/recovery', recoveryRoutes)
 app.use('/api/face', faceVerificationRoutes)
-dotenv.config()
 
-// Health check
 app.get('/', (req, res) => {
   res.json({
     message: '🚀 OWODE Alajo Platform API is running!',
     version: '2.0.0',
-    status: 'healthy',
-    features: [
-      'User Auth',
-      'Wallet Engine',
-      'Standard Ajo',
-      'Guaranteed Ajo',
-      'Trust Score System',
-      'Avatar Coverage',
-      'Agent Service',
-      'KYC Service',
-      'Notifications'
-    ]
+    status: 'healthy'
   })
+})
+
+app.get('/health', async (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() })
 })
 
 const PORT = process.env.PORT || 3000
