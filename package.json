@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "ts-node src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "postinstall": "prisma generate --schema prisma/schema.prisma"
-  },
+  "dev": "ts-node src/index.ts",
+  "build": "npx prisma generate && tsc",
+  "start": "node dist/index.js",
+  "postinstall": "npx prisma generate"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -22,6 +22,7 @@
     "ts-node": "^10.9.2",
     "typescript": "^6.0.2"
   },
+  
   "dependencies": {
     "@prisma/adapter-pg": "^7.7.0",
     "@prisma/client": "^7.7.0",
