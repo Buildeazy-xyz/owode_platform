@@ -2,7 +2,7 @@
   "name": "owode-platform-",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
+ "scripts": {
   "dev": "ts-node src/index.ts",
   "build": "npx prisma generate && tsc",
   "start": "node dist/index.js",
