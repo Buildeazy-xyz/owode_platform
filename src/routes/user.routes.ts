@@ -14,8 +14,10 @@ router.post('/register', async (req: Request, res: Response) => {
     const result = await registerUser({ fullName, phone, email, password })
     res.status(201).json({ success: true, message: 'User registered successfully', data: result })
   } catch (error: any) {
-    res.status(400).json({ success: false, message: error.message })
-  }
+  console.error('FULL ERROR:', JSON.stringify(error, null, 2))
+  console.error('ERROR MESSAGE:', error.message)
+  res.status(400).json({ success: false, message: error.message })
+}
 })
 
 router.post('/login', async (req: Request, res: Response) => {
