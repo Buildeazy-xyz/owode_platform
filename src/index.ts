@@ -1,6 +1,5 @@
 import dotenv from 'dotenv'
 dotenv.config()
-
 import express, { Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -63,5 +62,8 @@ const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`✅ OWODE Server running on port ${PORT}`)
 })
+
+
+console.log('DATABASE_URL:', process.env.DATABASE_URL?.slice(0, 30))
 
 export default app
