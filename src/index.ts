@@ -1,6 +1,4 @@
-if (process.env.NODE_ENV !== 'production') {
-  require('dotenv').config()
-}
+
 import express, { Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
