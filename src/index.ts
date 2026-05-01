@@ -15,7 +15,6 @@ import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
 import trustRoutes from './routes/trust.routes'
 import recoveryRoutes from './routes/recovery.routes'
 import faceVerificationRoutes from './routes/face-verification.routes'
-
 const app = express()
 
 app.use(helmet())
@@ -45,6 +44,9 @@ app.use('/api/trust', trustRoutes)
 app.use('/api/recovery', recoveryRoutes)
 app.use('/api/face', faceVerificationRoutes)
 
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date().toISOString() })
+})
 app.get('/', (req, res) => {
   res.json({
     message: '🚀 OWODE Alajo Platform API is running!',
