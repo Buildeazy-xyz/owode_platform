@@ -21,7 +21,7 @@ app.use(cors({
     'http://localhost:3001',
     'https://owode.xyz',
     'https://www.owode.xyz',
-    'https://owodeplatform-production.up.railway.app'
+    'https://owode-platform.onrender.com'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
