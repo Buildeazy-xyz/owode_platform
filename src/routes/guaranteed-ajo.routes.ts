@@ -14,23 +14,11 @@ const router = Router()
 // POST /api/guaranteed-ajo/create
 router.post('/create', protect, async (req: any, res: Response) => {
   try {
-    const { name, amount, frequency, totalMembers } = req.body
-    if (!name || !amount || !frequency || !totalMembers) {
-      res.status(400).json({ success: false, message: 'name, amount, frequency and totalMembers are required' })
+    if (req.user.role !== 'ADMIN') {
+      res.status(403).json({ success: false, message: 'Only OWODE admins can create Guaranteed Ajo groups' })
       return
     }
-    if (!['DAILY', 'WEEKLY', 'MONTHLY'].includes(frequency)) {
-      res.status(400).json({ success: false, message: 'frequency must be DAILY, WEEKLY or MONTHLY' })
-      return
-    }
-    const group = await createGuaranteedGroup({
-      name, amount, frequency, totalMembers, createdBy: req.user.userId
-    })
-    res.status(201).json({ success: true, message: 'Guaranteed Ajo group created!', data: group })
-  } catch (error: any) {
-    res.status(400).json({ success: false, message: error.message })
-  }
-})
+
 
 // POST /api/guaranteed-ajo/join
 router.post('/join', protect, async (req: any, res: Response) => {
