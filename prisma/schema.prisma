@@ -27,6 +27,7 @@ model User {
   wallet          Wallet?
   ajoMembers      AjoMember[]
   defaultRecords  DefaultRecord[]
+  savingsGoals    SavingsGoal[]
 }
 
 enum Role {
@@ -168,6 +169,54 @@ model GuaranteePool {
   totalPaidOut    Float    @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model SavingsGoal {
+  id              String          @id @default(uuid())
+  userId          String
+  title           String
+  description     String?
+  goalAmount      Float
+  currentAmount   Float           @default(0)
+  autoDebitAmount Float           @default(0)
+  autoDebitFreq   Frequency?
+  autoDebitDay    Int?
+  targetDate      DateTime
+  isLocked        Boolean         @default(true)
+  isCompleted     Boolean         @default(false)
+  isActive        Boolean         @default(true)
+  penaltyPercent  Float           @default(5)
+  status          SavingsStatus   @default(ACTIVE)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  user            User            @relation(fields: [userId], references: [id])
+  contributions   SavingsContribution[]
+}
+
+model SavingsContribution {
+  id          String      @id @default(uuid())
+  goalId      String
+  amount      Float
+  type        SavingsContributionType
+  description String?
+  createdAt   DateTime    @default(now())
+
+  goal        SavingsGoal @relation(fields: [goalId], references: [id])
+}
+
+enum SavingsStatus {
+  ACTIVE
+  COMPLETED
+  WITHDRAWN
+  CANCELLED
+}
+
+enum SavingsContributionType {
+  MANUAL
+  AUTO_DEBIT
+  WITHDRAWAL
+  PENALTY
 }
 
 enum Frequency {

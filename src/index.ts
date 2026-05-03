@@ -13,6 +13,7 @@ import guaranteedAjoRoutes from './routes/guaranteed-ajo.routes'
 import trustRoutes from './routes/trust.routes'
 import recoveryRoutes from './routes/recovery.routes'
 import faceVerificationRoutes from './routes/face-verification.routes'
+import savingsRoutes from './routes/savings.routes'
 const app = express()
 
 app.use(helmet())
@@ -41,6 +42,7 @@ app.use('/api/guaranteed-ajo', guaranteedAjoRoutes)
 app.use('/api/trust', trustRoutes)
 app.use('/api/recovery', recoveryRoutes)
 app.use('/api/face', faceVerificationRoutes)
+app.use('/api/savings', savingsRoutes)
 
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() })
