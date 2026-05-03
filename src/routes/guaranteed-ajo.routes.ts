@@ -8,10 +8,11 @@ import {
   checkAndHandleDefaults
 } from '../services/guaranteed-ajo.service'
 import { protect } from '../middleware/auth.middleware'
+import { assessGroupRisk } from '../services/trust.service'
 
 const router = Router()
 
-// POST /api/guaranteed-ajo/create
+// POST /api/guaranteed-ajo/create — ADMIN ONLY
 router.post('/create', protect, async (req: any, res: Response) => {
   try {
     if (req.user.role !== 'ADMIN') {
@@ -19,6 +20,27 @@ router.post('/create', protect, async (req: any, res: Response) => {
       return
     }
 
+    const { name, amount, frequency, totalMembers } = req.body
+    if (!name || !amount || !frequency || !totalMembers) {
+      res.status(400).json({ success: false, message: 'All fields are required' })
+      return
+    }
+
+    if (totalMembers < 6 || totalMembers > 12) {
+      res.status(400).json({ success: false, message: 'Members must be between 6 and 12' })
+      return
+    }
+
+    const result = await createGuaranteedGroup({
+      name, amount, frequency, totalMembers,
+      createdBy: req.user.userId
+    })
+
+    res.status(201).json({ success: true, message: 'Guaranteed Ajo group created!', data: result })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
 
 // POST /api/guaranteed-ajo/join
 router.post('/join', protect, async (req: any, res: Response) => {
@@ -69,7 +91,7 @@ router.get('/groups/:id', protect, async (req: any, res: Response) => {
   }
 })
 
-// POST /api/guaranteed-ajo/check-defaults/:groupId (Admin only)
+// POST /api/guaranteed-ajo/check-defaults/:groupId — ADMIN ONLY
 router.post('/check-defaults/:groupId', protect, async (req: any, res: Response) => {
   try {
     if (req.user.role !== 'ADMIN') {
@@ -82,7 +104,6 @@ router.post('/check-defaults/:groupId', protect, async (req: any, res: Response)
     res.status(400).json({ success: false, message: error.message })
   }
 })
-import { assessGroupRisk } from '../services/trust.service'
 
 // GET /api/guaranteed-ajo/risk/:groupId
 router.get('/risk/:groupId', protect, async (req: any, res: Response) => {
@@ -93,4 +114,5 @@ router.get('/risk/:groupId', protect, async (req: any, res: Response) => {
     res.status(400).json({ success: false, message: error.message })
   }
 })
+
 export default router
