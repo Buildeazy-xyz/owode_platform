@@ -1,10 +1,16 @@
-import { Router, Request, Response } from 'express'
-import { submitBVN, submitNIN, verifyUser, getKYCStatus } from '../services/kyc.service'
+import { Router, Response } from 'express'
+import {
+  submitBVN,
+  submitNIN,
+  submitFaceVerification,
+  verifyUser,
+  getKYCStatus
+} from '../services/kyc.service'
 import { protect } from '../middleware/auth.middleware'
 
 const router = Router()
 
-// POST /api/kyc/bvn — submit BVN
+// POST /api/kyc/bvn
 router.post('/bvn', protect, async (req: any, res: Response) => {
   try {
     const { bvn } = req.body
@@ -19,7 +25,7 @@ router.post('/bvn', protect, async (req: any, res: Response) => {
   }
 })
 
-// POST /api/kyc/nin — submit NIN
+// POST /api/kyc/nin
 router.post('/nin', protect, async (req: any, res: Response) => {
   try {
     const { nin } = req.body
@@ -34,7 +40,27 @@ router.post('/nin', protect, async (req: any, res: Response) => {
   }
 })
 
-// POST /api/kyc/verify/:userId — verify a user (admin only)
+// POST /api/kyc/face
+router.post('/face', protect, async (req: any, res: Response) => {
+  try {
+    const { image, bvn, nin } = req.body
+    if (!image) {
+      res.status(400).json({ success: false, message: 'Face image is required' })
+      return
+    }
+    const result = await submitFaceVerification({
+      userId: req.user.userId,
+      image,
+      bvn,
+      nin
+    })
+    res.status(200).json({ success: true, message: result.message, data: result })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
+
+// POST /api/kyc/verify/:userId — admin only
 router.post('/verify/:userId', protect, async (req: any, res: Response) => {
   try {
     if (req.user.role !== 'ADMIN') {
@@ -48,7 +74,7 @@ router.post('/verify/:userId', protect, async (req: any, res: Response) => {
   }
 })
 
-// GET /api/kyc/status — get my KYC status
+// GET /api/kyc/status
 router.get('/status', protect, async (req: any, res: Response) => {
   try {
     const result = await getKYCStatus(req.user.userId)
