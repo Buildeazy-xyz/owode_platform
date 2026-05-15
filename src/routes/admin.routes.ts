@@ -13,44 +13,49 @@ const adminOnly = (req: any, res: Response, next: any) => {
   next()
 }
 
-// GET /api/admin/stats — platform overview
+// GET /api/admin/stats
 router.get('/stats', protect, adminOnly, async (req: any, res: Response) => {
   try {
     const [
-  totalUsers,
-  totalAgents,
-  totalGroups,
-  totalTransactions,
-  verifiedUsers,
-  activeGroups,
-  guaranteedGroups,
-  totalDefaults,
-  activeDefaults
-] = await Promise.all([
-  prisma.user.count({ where: { role: 'CONTRIBUTOR' } }),
-  prisma.user.count({ where: { role: 'AGENT' } }),
-  prisma.ajoGroup.count(),
-  prisma.transaction.count(),
-  prisma.user.count({ where: { isVerified: true } }),
-  prisma.ajoGroup.count({ where: { isActive: true } }),
-  prisma.ajoGroup.count({ where: { isGuaranteed: true } }),
-  prisma.defaultRecord.count(),
-  prisma.defaultRecord.count({ where: { recoveryStatus: { in: ['PENDING', 'SOFT_RECOVERY', 'HARD_RECOVERY'] } } })
-])
+      totalUsers,
+      totalAgents,
+      totalGroups,
+      totalTransactions,
+      verifiedUsers,
+      activeGroups,
+      guaranteedGroups,
+      totalDefaults,
+      activeDefaults,
+      totalSavingsGoals,
+      activeSavingsGoals
+    ] = await Promise.all([
+      prisma.user.count({ where: { role: 'CONTRIBUTOR' } }),
+      prisma.user.count({ where: { role: 'AGENT' } }),
+      prisma.ajoGroup.count(),
+      prisma.transaction.count(),
+      prisma.user.count({ where: { isVerified: true } }),
+      prisma.ajoGroup.count({ where: { isActive: true } }),
+      prisma.ajoGroup.count({ where: { isGuaranteed: true } }),
+      prisma.defaultRecord.count(),
+      prisma.defaultRecord.count({ where: { recoveryStatus: { in: ['PENDING', 'SOFT_RECOVERY', 'HARD_RECOVERY'] } } }),
+      prisma.savingsGoal.count(),
+      prisma.savingsGoal.count({ where: { status: 'ACTIVE' } })
+    ])
 
-    // Total money in platform
     const wallets = await prisma.wallet.aggregate({
       _sum: { balance: true, totalSaved: true }
     })
 
-    // Recent transactions
+    const savingsAggregate = await prisma.savingsGoal.aggregate({
+      _sum: { currentAmount: true }
+    })
+
     const recentTransactions = await prisma.transaction.findMany({
       orderBy: { createdAt: 'desc' },
       take: 10,
       include: { wallet: { include: { user: true } } }
     })
 
-    // Daily transaction volume for last 7 days
     const sevenDaysAgo = new Date()
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
 
@@ -70,6 +75,12 @@ router.get('/stats', protect, adminOnly, async (req: any, res: Response) => {
         totalTransactions,
         verifiedUsers,
         activeGroups,
+        guaranteedGroups,
+        totalDefaults,
+        activeDefaults,
+        totalSavingsGoals,
+        activeSavingsGoals,
+        totalSavingsAmount: savingsAggregate._sum.currentAmount || 0,
         totalBalance: wallets._sum.balance || 0,
         totalSaved: wallets._sum.totalSaved || 0,
         recentTransactions,
@@ -88,18 +99,18 @@ router.get('/users', protect, adminOnly, async (req: any, res: Response) => {
       orderBy: { createdAt: 'desc' },
       include: { wallet: true }
     })
-  const safeUsers = users.map((u: any) => ({
-    id: u.id,
-    fullName: u.fullName,
-    phone: u.phone,
-    email: u.email,
-  role: u.role,
-  isVerified: u.isVerified,
-  isActive: u.isActive,
-  trustScore: u.trustScore,
-  createdAt: u.createdAt,
-  wallet: u.wallet
-}))
+    const safeUsers = users.map((u: any) => ({
+      id: u.id,
+      fullName: u.fullName,
+      phone: u.phone,
+      email: u.email,
+      role: u.role,
+      isVerified: u.isVerified,
+      isActive: u.isActive,
+      trustScore: u.trustScore,
+      createdAt: u.createdAt,
+      wallet: u.wallet
+    }))
     res.status(200).json({ success: true, data: safeUsers })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
@@ -133,21 +144,18 @@ router.get('/ajo-groups', protect, adminOnly, async (req: any, res: Response) =>
   }
 })
 
-// POST /api/admin/ajo/create — Admin creates Ajo group
+// POST /api/admin/ajo/create
 router.post('/ajo/create', protect, adminOnly, async (req: any, res: Response) => {
   try {
     const { name, amount, frequency, totalMembers } = req.body
-
     if (!name || !amount || !frequency || !totalMembers) {
       res.status(400).json({ success: false, message: 'All fields required' })
       return
     }
-
     if (totalMembers < 6 || totalMembers > 12) {
       res.status(400).json({ success: false, message: 'Members must be between 6 and 12' })
       return
     }
-
     const group = await prisma.ajoGroup.create({
       data: {
         name, amount, frequency, totalMembers,
@@ -156,13 +164,13 @@ router.post('/ajo/create', protect, adminOnly, async (req: any, res: Response) =
         createdBy: req.user.userId
       }
     })
-
     res.status(201).json({ success: true, message: 'Ajo group created!', data: group })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
   }
 })
 
+// DELETE /api/admin/ajo/:id
 router.delete('/ajo/:id', protect, adminOnly, async (req: any, res: Response) => {
   try {
     await prisma.ajoMember.deleteMany({ where: { groupId: req.params.id } })
@@ -170,29 +178,6 @@ router.delete('/ajo/:id', protect, adminOnly, async (req: any, res: Response) =>
     res.status(200).json({ success: true, message: 'Group deleted' })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
-  }
-})
-
- // GET /api/admin/security-log
-router.get('/security-log', protect, adminOnly, async (req: any, res: Response) => {
-  try {
-    // Get recent login activities from transactions as proxy
-    const recentActivity = await prisma.user.findMany({
-      orderBy: { updatedAt: 'desc' },
-      take: 20,
-      select: {
-        id: true,
-        fullName: true,
-        phone: true,
-        isVerified: true,
-        trustScore: true,
-        updatedAt: true,
-        role: true
-      }
-    })
-    res.status(200).json({ success: true, data: recentActivity })
-  } catch (error: any) {
-    res.status(500).json({ success: false, message: error.message })
   }
 })
 
@@ -230,6 +215,104 @@ router.post('/wallet/unlock/:userId', protect, adminOnly, async (req: any, res: 
       data: { isLocked: false }
     })
     res.status(200).json({ success: true, message: 'Wallet unlocked successfully' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/security-log
+router.get('/security-log', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const recentActivity = await prisma.user.findMany({
+      orderBy: { updatedAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        isVerified: true,
+        trustScore: true,
+        updatedAt: true,
+        role: true
+      }
+    })
+    res.status(200).json({ success: true, data: recentActivity })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/savings/goals
+router.get('/savings/goals', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const goals = await prisma.savingsGoal.findMany({
+      include: {
+        user: { select: { fullName: true, phone: true } },
+        contributions: { orderBy: { createdAt: 'desc' }, take: 3 }
+      },
+      orderBy: { createdAt: 'desc' }
+    })
+    res.status(200).json({ success: true, data: goals })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/savings/stats
+router.get('/savings/stats', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const [total, active, completed, withdrawn] = await Promise.all([
+      prisma.savingsGoal.count(),
+      prisma.savingsGoal.count({ where: { status: 'ACTIVE' } }),
+      prisma.savingsGoal.count({ where: { status: 'COMPLETED' } }),
+      prisma.savingsGoal.count({ where: { status: 'WITHDRAWN' } })
+    ])
+
+    const aggregate = await prisma.savingsGoal.aggregate({
+      _sum: { currentAmount: true, goalAmount: true }
+    })
+
+    res.status(200).json({
+      success: true,
+      data: {
+        total,
+        active,
+        completed,
+        withdrawn,
+        totalSaved: aggregate._sum.currentAmount || 0,
+        totalTarget: aggregate._sum.goalAmount || 0
+      }
+    })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/admin/kyc/pending
+router.get('/kyc/pending', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const pending = await prisma.user.findMany({
+      where: {
+        isVerified: false,
+        OR: [
+          { bvn: { not: null } },
+          { nin: { not: null } }
+        ]
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        fullName: true,
+        phone: true,
+        email: true,
+        bvn: true,
+        nin: true,
+        isVerified: true,
+        createdAt: true,
+        trustScore: true
+      }
+    })
+    res.status(200).json({ success: true, data: pending })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
   }
