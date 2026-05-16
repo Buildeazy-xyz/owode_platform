@@ -288,6 +288,37 @@ router.get('/savings/stats', protect, adminOnly, async (req: any, res: Response)
   }
 })
 
+// POST /api/admin/notifications/send
+router.post('/notifications/send', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const { title, body, type } = req.body
+    if (!title || !body) {
+      res.status(400).json({ success: false, message: 'Title and body are required' })
+      return
+    }
+
+    // Get users based on type
+    let users: any[] = []
+    if (type === 'verified') {
+      users = await prisma.user.findMany({ where: { isVerified: true, role: 'CONTRIBUTOR' } })
+    } else if (type === 'unverified') {
+      users = await prisma.user.findMany({ where: { isVerified: false, role: 'CONTRIBUTOR' } })
+    } else {
+      users = await prisma.user.findMany({ where: { role: 'CONTRIBUTOR' } })
+    }
+
+    // For now log the notification — push notifications will be added with Expo push tokens
+    console.log(`📢 Admin notification sent to ${users.length} users: ${title}`)
+
+    res.status(200).json({
+      success: true,
+      message: `Notification sent to ${users.length} users!`,
+      data: { sent: users.length, title, body }
+    })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
 // GET /api/admin/kyc/pending
 router.get('/kyc/pending', protect, adminOnly, async (req: any, res: Response) => {
   try {
