@@ -23,38 +23,32 @@ router.post('/send-otp', async (req: Request, res: Response) => {
       return
     }
 
-    // Check if phone already registered
-    const existing = await prisma.user.findUnique({ where: { phone } })
-    if (existing) {
+    // Check if phone already registered - use raw query to avoid schema issues
+    const existing = await prisma.$queryRaw`
+      SELECT id FROM "User" WHERE phone = ${phone} LIMIT 1
+    `
+    
+    if (Array.isArray(existing) && existing.length > 0) {
       res.status(400).json({ success: false, message: 'Phone number already registered' })
       return
     }
 
-    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
-    const expires = Date.now() + 10 * 60 * 1000 // 10 minutes
-
-    // Store OTP
+    const expires = Date.now() + 10 * 60 * 1000
     otpStore[phone] = { otp, expires }
 
-    // Format phone for Nigeria
     const formattedPhone = phone.startsWith('0')
       ? '+234' + phone.substring(1)
       : phone
 
-    // Send via Twilio
     await twilioClient.messages.create({
-      body: `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`,
+      body: `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code.`,
       from: process.env.TWILIO_PHONE_NUMBER,
       to: formattedPhone
     })
 
     console.log(`OTP sent to ${formattedPhone}: ${otp}`)
-
-    res.status(200).json({
-      success: true,
-      message: `OTP sent to ${phone}`
-    })
+    res.status(200).json({ success: true, message: `OTP sent to ${phone}` })
   } catch (error: any) {
     console.error('OTP send error:', error)
     res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })
