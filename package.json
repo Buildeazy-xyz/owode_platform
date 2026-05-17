@@ -35,6 +35,5 @@
     "twilio": "^5.13.1",
     "typescript": "^6.0.2",
     "uuid": "^13.0.0"
-  },
-  "devDependencies": {}
+  }
 }
