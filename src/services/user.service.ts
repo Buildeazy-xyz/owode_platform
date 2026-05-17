@@ -7,6 +7,8 @@ export const registerUser = async (data: {
   phone: string
   email?: string
   password: string
+  dateOfBirth?: string
+  country?: string
   role?: 'CONTRIBUTOR' | 'AGENT' | 'ADMIN'
 }) => {
   const existingUser = await prisma.user.findUnique({ where: { phone: data.phone } })
@@ -25,6 +27,8 @@ export const registerUser = async (data: {
       phone: data.phone,
       email: data.email,
       password: hashedPassword,
+      dateOfBirth: data.dateOfBirth,
+      country: data.country || 'Nigeria',
       pin: '',
       transactionPin: '',
       role: data.role || 'CONTRIBUTOR',

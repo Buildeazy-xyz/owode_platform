@@ -17,13 +17,16 @@ model User {
   pin             String   @default("")
   transactionPin  String   @default("")
   appPin          String?
+  dateOfBirth     String?
+  country         String?  @default("Nigeria")
   trustScore      Float    @default(50)
   role            Role     @default(CONTRIBUTOR)
   isVerified      Boolean  @default(false)
   isActive        Boolean  @default(true)
+  pushToken       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-  pushToken    String?
+
   wallet          Wallet?
   ajoMembers      AjoMember[]
   defaultRecords  DefaultRecord[]
