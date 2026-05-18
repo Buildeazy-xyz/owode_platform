@@ -11,23 +11,43 @@ const twilioClient = twilio(
   process.env.TWILIO_AUTH_TOKEN
 )
 
-// In-memory OTP store (expires in 10 minutes)
 const otpStore: Record<string, { otp: string; expires: number }> = {}
+
+// Normalize phone — always store as 0XXXXXXXXXX (11 digits for Nigeria)
+const normalizePhone = (phone: string): string => {
+  const stripped = phone.replace(/\s+/g, '').trim()
+  if (stripped.startsWith('+234')) return '0' + stripped.substring(4)
+  if (stripped.startsWith('234')) return '0' + stripped.substring(3)
+  if (stripped.startsWith('0')) return stripped
+  // 10 digit without leading 0 — add 0
+  return '0' + stripped
+}
+
+// Format phone for Twilio (international format)
+const formatForTwilio = (phone: string, dialCode: string = '+234'): string => {
+  const normalized = normalizePhone(phone)
+  if (normalized.startsWith('0')) {
+    return dialCode + normalized.substring(1)
+  }
+  return dialCode + normalized
+}
 
 // POST /api/users/send-otp
 router.post('/send-otp', async (req: Request, res: Response) => {
   try {
-    const { phone } = req.body
+    const { phone, dialCode } = req.body
     if (!phone) {
       res.status(400).json({ success: false, message: 'Phone number is required' })
       return
     }
 
-    // Check if phone already registered - use raw query to avoid schema issues
+    const normalizedPhone = normalizePhone(phone)
+
+    // Check if phone already registered
     const existing = await prisma.$queryRaw`
-      SELECT id FROM "User" WHERE phone = ${phone} LIMIT 1
-    `
-    
+      SELECT id FROM "User" WHERE phone = ${normalizedPhone} LIMIT 1
+    ` as any[]
+
     if (Array.isArray(existing) && existing.length > 0) {
       res.status(400).json({ success: false, message: 'Phone number already registered' })
       return
@@ -35,20 +55,25 @@ router.post('/send-otp', async (req: Request, res: Response) => {
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
     const expires = Date.now() + 10 * 60 * 1000
-    otpStore[phone] = { otp, expires }
 
-    const formattedPhone = phone.startsWith('0')
-      ? '+234' + phone.substring(1)
-      : phone
+    // Store OTP using normalized phone
+    otpStore[normalizedPhone] = { otp, expires }
+
+    // Format for Twilio
+    const twilioPhone = formatForTwilio(phone, dialCode || '+234')
 
     await twilioClient.messages.create({
-      body: `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code.`,
+      body: `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`,
       from: process.env.TWILIO_PHONE_NUMBER,
-      to: formattedPhone
+      to: twilioPhone
     })
 
-    console.log(`OTP sent to ${formattedPhone}: ${otp}`)
-    res.status(200).json({ success: true, message: `OTP sent to ${phone}` })
+    console.log(`✅ OTP sent to ${twilioPhone}: ${otp}`)
+
+    res.status(200).json({
+      success: true,
+      message: `OTP sent to ${twilioPhone}`
+    })
   } catch (error: any) {
     console.error('OTP send error:', error)
     res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })
@@ -64,14 +89,16 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
       return
     }
 
-    const stored = otpStore[phone]
+    const normalizedPhone = normalizePhone(phone)
+    const stored = otpStore[normalizedPhone]
+
     if (!stored) {
       res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' })
       return
     }
 
     if (Date.now() > stored.expires) {
-      delete otpStore[phone]
+      delete otpStore[normalizedPhone]
       res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' })
       return
     }
@@ -81,8 +108,7 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
       return
     }
 
-    // OTP verified — remove from store
-    delete otpStore[phone]
+    delete otpStore[normalizedPhone]
 
     res.status(200).json({
       success: true,
@@ -96,15 +122,26 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
 // POST /api/users/register
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { fullName, phone, email, password, dateOfBirth } = req.body
+    const { fullName, phone, email, password, dateOfBirth, country } = req.body
     if (!fullName || !phone || !password) {
       res.status(400).json({ success: false, message: 'fullName, phone and password are required' })
       return
     }
-    const result = await registerUser({ fullName, phone, email, password, dateOfBirth })
+
+    // Always normalize phone before saving
+    const normalizedPhone = normalizePhone(phone)
+
+    const result = await registerUser({
+      fullName,
+      phone: normalizedPhone,
+      email,
+      password,
+      dateOfBirth,
+      country
+    })
     res.status(201).json({ success: true, message: 'User registered successfully', data: result })
   } catch (error: any) {
-    console.error('FULL ERROR:', JSON.stringify(error, null, 2))
+    console.error('Register error:', error.message)
     res.status(400).json({ success: false, message: error.message })
   }
 })
@@ -117,7 +154,11 @@ router.post('/login', async (req: Request, res: Response) => {
       res.status(400).json({ success: false, message: 'phone and password are required' })
       return
     }
-    const result = await loginUser({ phone, password })
+
+    // Normalize phone for login too
+    const normalizedPhone = normalizePhone(phone)
+
+    const result = await loginUser({ phone: normalizedPhone, password })
     res.status(200).json({ success: true, message: 'Login successful', data: result })
   } catch (error: any) {
     res.status(401).json({ success: false, message: error.message })
