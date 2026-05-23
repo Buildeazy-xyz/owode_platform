@@ -223,3 +223,28 @@ router.post('/push-token', protect, async (req: any, res: Response) => {
 })
 
 export default router
+
+// PUT /api/users/update-email
+
+// PUT /api/users/update-email
+router.put('/update-email', protect, async (req: any, res: Response) => {
+  try {
+    const { email } = req.body
+    if (!email || !email.includes('@')) {
+      res.status(400).json({ success: false, message: 'Valid email is required' })
+      return
+    }
+    const existing = await prisma.user.findFirst({ where: { email, NOT: { id: req.user.userId } } })
+    if (existing) {
+      res.status(400).json({ success: false, message: 'Email already used by another account' })
+      return
+    }
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { email }
+    })
+    res.status(200).json({ success: true, message: 'Email updated successfully!' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
