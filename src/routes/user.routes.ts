@@ -27,7 +27,7 @@ const formatForTwilio = (phone: string, dialCode: string = '+234'): string => {
   return dialCode + normalized
 }
 
-// GET /api/users/me — get current user with fresh wallet data
+// GET /api/users/me
 router.get('/me', protect, async (req: any, res: Response) => {
   try {
     const user = await prisma.user.findUnique({
@@ -49,13 +49,53 @@ router.get('/me', protect, async (req: any, res: Response) => {
         isVerified: user.isVerified,
         hasTransactionPin: user.transactionPin !== '',
         trustScore: user.trustScore,
-        dateOfBirth: user.dateOfBirth,
-        country: user.country,
-        bvn: user.bvn ? '***masked***' : null,
-        nin: user.nin ? '***masked***' : null,
+        dateOfBirth: (user as any).dateOfBirth,
+        country: (user as any).country,
         hasBVN: !!user.bvn,
         hasNIN: !!user.nin,
+        referralCode: (user as any).referralCode,
+        referralCount: (user as any).referralCount || 0,
         wallet: user.wallet
+      }
+    })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// GET /api/users/referral
+router.get('/referral', protect, async (req: any, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId }
+    }) as any
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' })
+      return
+    }
+
+    let referralCode = user.referralCode
+    if (!referralCode) {
+      referralCode = 'OWD' + user.id.substring(0, 5).toUpperCase()
+      await prisma.user.update({
+        where: { id: req.user.userId },
+        data: { referralCode } as any
+      })
+    }
+
+    const referredUsers = await (prisma.user as any).findMany({
+      where: { referredBy: referralCode },
+      select: { fullName: true, createdAt: true, isVerified: true }
+    })
+
+    res.status(200).json({
+      success: true,
+      data: {
+        referralCode,
+        referralCount: referredUsers.length,
+        referralLink: `https://owode.xyz/join?ref=${referralCode}`,
+        referredUsers
       }
     })
   } catch (error: any) {
@@ -129,13 +169,39 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
 // POST /api/users/register
 router.post('/register', async (req: Request, res: Response) => {
   try {
-    const { fullName, phone, email, password, dateOfBirth, country } = req.body
+    const { fullName, phone, email, password, dateOfBirth, country, referralCode } = req.body
     if (!fullName || !phone || !password) {
       res.status(400).json({ success: false, message: 'fullName, phone and password are required' })
       return
     }
     const normalizedPhone = normalizePhone(phone)
     const result = await registerUser({ fullName, phone: normalizedPhone, email, password, dateOfBirth, country })
+
+    // Generate referral code for new user
+    const newUserCode = 'OWD' + result.user.id.substring(0, 5).toUpperCase()
+    await prisma.user.update({
+      where: { id: result.user.id },
+      data: { referralCode: newUserCode } as any
+    })
+
+    // Handle referral bonus
+    if (referralCode) {
+      const referrer = await (prisma.user as any).findFirst({ where: { referralCode } })
+      if (referrer) {
+        await prisma.user.update({
+          where: { id: result.user.id },
+          data: { referredBy: referralCode } as any
+        })
+        await prisma.user.update({
+          where: { id: referrer.id },
+          data: {
+            referralCount: { increment: 1 },
+            trustScore: { increment: 5 }
+          } as any
+        })
+      }
+    }
+
     res.status(201).json({ success: true, message: 'User registered successfully', data: result })
   } catch (error: any) {
     console.error('Register error:', error.message)
@@ -222,10 +288,6 @@ router.post('/push-token', protect, async (req: any, res: Response) => {
   }
 })
 
-export default router
-
-// PUT /api/users/update-email
-
 // PUT /api/users/update-email
 router.put('/update-email', protect, async (req: any, res: Response) => {
   try {
@@ -239,12 +301,11 @@ router.put('/update-email', protect, async (req: any, res: Response) => {
       res.status(400).json({ success: false, message: 'Email already used by another account' })
       return
     }
-    await prisma.user.update({
-      where: { id: req.user.userId },
-      data: { email }
-    })
+    await prisma.user.update({ where: { id: req.user.userId }, data: { email } })
     res.status(200).json({ success: true, message: 'Email updated successfully!' })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
   }
 })
+
+export default router
