@@ -1,17 +1,30 @@
 import { Router, Request, Response } from 'express'
 import { registerUser, loginUser, setAppPin, verifyAppPin, setTransactionPin } from '../services/user.service'
 import { protect } from '../middleware/auth.middleware'
-import twilio from 'twilio'
 import { prisma } from '../config/database'
 
 const router = Router()
 
-const twilioClient = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-)
-
 const otpStore: Record<string, { otp: string; expires: number }> = {}
+
+const sendOTPviaTermii = async (phone: string, message: string): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const apiKey = process.env.TERMII_API_KEY
+    const senderId = process.env.TERMII_SENDER_ID || 'OWODE'
+    if (!apiKey) return { success: false, error: 'Termii not configured' }
+    const response = await fetch('https://v3.api.termii.com/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey, to: phone, from: senderId,
+        sms: message, type: 'plain', channel: 'generic'
+      })
+    })
+    const result: any = await response.json()
+    if (result.message_id) return { success: true }
+    return { success: false, error: result.message || JSON.stringify(result) }
+  } catch (error: any) { return { success: false, error: error.message } }
+}
 
 const normalizePhone = (phone: string): string => {
   const stripped = phone.replace(/\s+/g, '').trim()
@@ -21,7 +34,7 @@ const normalizePhone = (phone: string): string => {
   return '0' + stripped
 }
 
-const formatForTwilio = (phone: string, dialCode: string = '+234'): string => {
+const formatE164 = (phone: string, dialCode: string = '+234'): string => {
   const normalized = normalizePhone(phone)
   if (normalized.startsWith('0')) return dialCode + normalized.substring(1)
   return dialCode + normalized
@@ -122,14 +135,16 @@ router.post('/send-otp', async (req: Request, res: Response) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
     const expires = Date.now() + 10 * 60 * 1000
     otpStore[normalizedPhone] = { otp, expires }
-    const twilioPhone = formatForTwilio(phone, dialCode || '+234')
-    await twilioClient.messages.create({
-      body: `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: twilioPhone
-    })
-    console.log(`✅ OTP sent to ${twilioPhone}: ${otp}`)
-    res.status(200).json({ success: true, message: `OTP sent to ${twilioPhone}` })
+    const e164Phone = formatE164(phone, dialCode || '+234')
+    const termiiPhone = e164Phone.replace(/^\+/, '')
+    const smsResult = await sendOTPviaTermii(termiiPhone, `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`)
+    if (!smsResult.success) {
+      console.error(`❌ Termii OTP send failed: ${smsResult.error}`)
+      res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })
+      return
+    }
+    console.log(`✅ OTP sent to ${e164Phone}: ${otp}`)
+    res.status(200).json({ success: true, message: `OTP sent to ${e164Phone}` })
   } catch (error: any) {
     console.error('OTP send error:', error)
     res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })

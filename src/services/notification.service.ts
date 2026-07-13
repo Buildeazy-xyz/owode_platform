@@ -2,30 +2,30 @@ import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY || 'placeholder')
 
-const getTwilioClient = () => {
-  try {
-    if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN ||
-        process.env.TWILIO_ACCOUNT_SID === 'ACxxxxxxxxxxxxxxxx') return null
-    const twilio = require('twilio')
-    return twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
-  } catch {
-    return null
-  }
-}
-
 export const sendSMS = async (data: { to: string; message: string }) => {
   try {
-    const client = getTwilioClient()
-    if (!client) {
-      console.log(`📱 SMS (not sent - Twilio not configured): ${data.message}`)
-      return { success: false, error: 'Twilio not configured' }
+    const apiKey = process.env.TERMII_API_KEY
+    const senderId = process.env.TERMII_SENDER_ID || 'OWODE'
+    if (!apiKey) {
+      console.log(`📱 SMS (not sent - Termii not configured): ${data.message}`)
+      return { success: false, error: 'Termii not configured' }
     }
-    const result = await client.messages.create({
-      body: data.message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: `+234${data.to.slice(1)}`
+    const formattedPhone = data.to.startsWith('0') ? '234' + data.to.slice(1) : data.to.replace(/^\+/, '')
+    const response = await fetch('https://v3.api.termii.com/api/sms/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey, to: formattedPhone, from: senderId,
+        sms: data.message, type: 'plain', channel: 'generic'
+      })
     })
-    return { success: true, sid: result.sid }
+    const result: any = await response.json()
+    if (result.message_id) {
+      console.log(`✅ Termii SMS sent to ${formattedPhone}`)
+      return { success: true, sid: result.message_id }
+    }
+    console.log(`📱 Termii SMS failed: ${JSON.stringify(result)}`)
+    return { success: false, error: result.message || 'Unknown Termii error' }
   } catch (error: any) {
     console.log(`📱 SMS failed (non-critical): ${error.message}`)
     return { success: false, error: error.message }
