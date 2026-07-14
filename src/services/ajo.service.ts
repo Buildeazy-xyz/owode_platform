@@ -64,7 +64,8 @@ export const joinAjoGroup = async (data: {
   const alreadyJoined = group.members.find((m: any) => m.userId === data.userId)
   if (alreadyJoined) throw new Error('You have already joined this group')
 
-  const position = realMembers.length + 1
+  const maxPos = group.members.reduce((mx: number, m: any) => Math.max(mx, m.position), 0)
+  const position = maxPos + 1
 
   const member = await prisma.ajoMember.create({
     data: {

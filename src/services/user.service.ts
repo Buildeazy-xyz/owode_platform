@@ -92,9 +92,15 @@ export const loginUser = async (data: { phone: string; password: string }) => {
   }
 }
 
-export const setTransactionPin = async (userId: string, transactionPin: string) => {
+export const setTransactionPin = async (userId: string, transactionPin: string, currentPin?: string) => {
   if (transactionPin.length !== 4 || isNaN(Number(transactionPin))) {
     throw new Error('Transaction PIN must be exactly 4 digits')
+  }
+  const existingUser = await prisma.user.findUnique({ where: { id: userId } })
+  if (existingUser && existingUser.transactionPin && existingUser.transactionPin !== '') {
+    if (!currentPin) throw new Error('CURRENT_PIN_REQUIRED: Enter your current transaction PIN')
+    const pinOk = await bcrypt.compare(currentPin, existingUser.transactionPin)
+    if (!pinOk) throw new Error('Current transaction PIN is incorrect')
   }
   const hashedPin = await bcrypt.hash(transactionPin, 10)
   await prisma.user.update({
@@ -104,9 +110,15 @@ export const setTransactionPin = async (userId: string, transactionPin: string) 
   return { message: 'Transaction PIN set successfully' }
 }
 
-export const setAppPin = async (userId: string, appPin: string) => {
+export const setAppPin = async (userId: string, appPin: string, currentPin?: string) => {
   if (appPin.length !== 6 || isNaN(Number(appPin))) {
     throw new Error('App PIN must be exactly 6 digits')
+  }
+  const existingAppUser = await prisma.user.findUnique({ where: { id: userId } })
+  if (existingAppUser && existingAppUser.appPin) {
+    if (!currentPin) throw new Error('CURRENT_PIN_REQUIRED: Enter your current app PIN')
+    const appPinOk = await bcrypt.compare(currentPin, existingAppUser.appPin)
+    if (!appPinOk) throw new Error('Current app PIN is incorrect')
   }
   const hashedAppPin = await bcrypt.hash(appPin, 10)
   await prisma.user.update({ where: { id: userId }, data: { appPin: hashedAppPin } })

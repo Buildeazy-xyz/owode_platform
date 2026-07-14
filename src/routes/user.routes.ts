@@ -243,12 +243,12 @@ router.post('/login', async (req: Request, res: Response) => {
 // POST /api/users/transaction-pin/set
 router.post('/transaction-pin/set', protect, async (req: any, res: Response) => {
   try {
-    const { transactionPin } = req.body
+    const { transactionPin, currentPin } = req.body
     if (!transactionPin) {
       res.status(400).json({ success: false, message: 'transactionPin is required' })
       return
     }
-    const result = await setTransactionPin(req.user.userId, transactionPin)
+    const result = await setTransactionPin(req.user.userId, transactionPin, currentPin)
     res.status(200).json({ success: true, message: result.message })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
@@ -258,12 +258,12 @@ router.post('/transaction-pin/set', protect, async (req: any, res: Response) => 
 // POST /api/users/app-pin/set
 router.post('/app-pin/set', protect, async (req: any, res: Response) => {
   try {
-    const { appPin } = req.body
+    const { appPin, currentPin } = req.body
     if (!appPin) {
       res.status(400).json({ success: false, message: 'appPin is required' })
       return
     }
-    const result = await setAppPin(req.user.userId, appPin)
+    const result = await setAppPin(req.user.userId, appPin, currentPin)
     res.status(200).json({ success: true, message: result.message })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
@@ -273,7 +273,7 @@ router.post('/app-pin/set', protect, async (req: any, res: Response) => {
 // POST /api/users/app-pin/verify
 router.post('/app-pin/verify', protect, async (req: any, res: Response) => {
   try {
-    const { appPin } = req.body
+    const { appPin, currentPin } = req.body
     if (!appPin) {
       res.status(400).json({ success: false, message: 'appPin is required' })
       return

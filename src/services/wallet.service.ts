@@ -162,7 +162,7 @@ export const transferFunds = async (
     }),
     prisma.wallet.update({
       where: { userId: recipient.id },
-      data: { balance: recipientNewBalance, totalSaved: recipient.wallet.totalSaved + amount }
+      data: { balance: recipientNewBalance }
     }),
     prisma.transaction.create({
       data: {
