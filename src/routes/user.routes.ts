@@ -7,6 +7,36 @@ const router = Router()
 
 const otpStore: Record<string, { otp: string; expires: number }> = {}
 
+
+const sendOTPviaEmail = async (email: string, otp: string): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const apiKey = process.env.RESEND_API_KEY
+    if (!apiKey) return { success: false, error: 'Resend not configured' }
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        from: `OWODE Alajo <${process.env.SENDER_EMAIL || 'onboarding@resend.dev'}>`,
+        to: email,
+        subject: `${otp} is your OWODE verification code`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto">
+          <div style="background:linear-gradient(135deg,#0d47a1,#1565c0);padding:24px;text-align:center;border-radius:12px 12px 0 0">
+            <h1 style="color:#fff;margin:0;letter-spacing:4px">OWODE</h1>
+          </div>
+          <div style="padding:28px;background:#f9f9f9;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#333">Your OWODE verification code is:</p>
+            <p style="font-size:36px;font-weight:800;letter-spacing:10px;color:#0d47a1;text-align:center;margin:16px 0">${otp}</p>
+            <p style="font-size:13px;color:#666">This code expires in 10 minutes. Do not share it with anyone.</p>
+          </div>
+        </div>`
+      })
+    })
+    const result: any = await response.json()
+    if (result.id) return { success: true }
+    return { success: false, error: result.message || JSON.stringify(result) }
+  } catch (error: any) { return { success: false, error: error.message } }
+}
+
 const sendOTPviaTermii = async (phone: string, message: string): Promise<{ success: boolean; error?: string }> => {
   try {
     const apiKey = process.env.TERMII_API_KEY
@@ -119,7 +149,7 @@ router.get('/referral', protect, async (req: any, res: Response) => {
 // POST /api/users/send-otp
 router.post('/send-otp', async (req: Request, res: Response) => {
   try {
-    const { phone, dialCode } = req.body
+    const { phone, dialCode, email } = req.body
     if (!phone) {
       res.status(400).json({ success: false, message: 'Phone number is required' })
       return
@@ -140,6 +170,15 @@ router.post('/send-otp', async (req: Request, res: Response) => {
     const smsResult = await sendOTPviaTermii(termiiPhone, `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`)
     if (!smsResult.success) {
       console.error(`❌ Termii OTP send failed: ${smsResult.error}`)
+      if (email) {
+        const emailResult = await sendOTPviaEmail(email, otp)
+        if (emailResult.success) {
+          console.log(`✅ OTP sent via EMAIL to ${email}: ${otp}`)
+          res.status(200).json({ success: true, message: `OTP sent to your email ${email}`, channel: 'email' })
+          return
+        }
+        console.error(`❌ Email OTP also failed: ${emailResult.error}`)
+      }
       res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })
       return
     }
