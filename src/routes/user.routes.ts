@@ -137,7 +137,7 @@ router.get('/referral', protect, async (req: any, res: Response) => {
       data: {
         referralCode,
         referralCount: referredUsers.length,
-        referralLink: `https://owode.xyz/join?ref=${referralCode}`,
+        referralLink: `https://owodeagent.com/join?ref=${referralCode}`,
         referredUsers
       }
     })
