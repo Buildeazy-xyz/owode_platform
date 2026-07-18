@@ -226,8 +226,7 @@ export const getUserSavingsGoals = async (userId: string) => {
     where: { userId, isActive: true },
     include: {
       contributions: {
-        orderBy: { createdAt: 'desc' },
-        take: 5
+        orderBy: { createdAt: 'asc' }
       }
     },
     orderBy: { createdAt: 'desc' }
