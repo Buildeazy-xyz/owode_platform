@@ -42,12 +42,12 @@ const sendOTPviaTermii = async (phone: string, message: string): Promise<{ succe
     const apiKey = process.env.TERMII_API_KEY
     const senderId = process.env.TERMII_SENDER_ID || 'OWODE'
     if (!apiKey) return { success: false, error: 'Termii not configured' }
-    const response = await fetch('https://v3.api.termii.com/api/sms/send', {
+    const response = await fetch('https://v4.api.termii.com/api/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: apiKey, to: phone, from: senderId,
-        sms: message, type: 'plain', channel: 'generic'
+        sms: message, type: 'plain', channel: 'dnd'
       })
     })
     const result: any = await response.json()

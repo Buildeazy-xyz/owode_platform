@@ -11,12 +11,12 @@ export const sendSMS = async (data: { to: string; message: string }) => {
       return { success: false, error: 'Termii not configured' }
     }
     const formattedPhone = data.to.startsWith('0') ? '234' + data.to.slice(1) : data.to.replace(/^\+/, '')
-    const response = await fetch('https://v3.api.termii.com/api/sms/send', {
+    const response = await fetch('https://v4.api.termii.com/api/sms/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         api_key: apiKey, to: formattedPhone, from: senderId,
-        sms: data.message, type: 'plain', channel: 'generic'
+        sms: data.message, type: 'plain', channel: 'dnd'
       })
     })
     const result: any = await response.json()
