@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express'
 import { registerUser, loginUser, setAppPin, verifyAppPin, setTransactionPin } from '../services/user.service'
 import { protect } from '../middleware/auth.middleware'
 import { prisma } from '../config/database'
+import bcrypt from 'bcryptjs'
 
 const router = Router()
 
@@ -357,6 +358,34 @@ router.put('/update-email', protect, async (req: any, res: Response) => {
     }
     await prisma.user.update({ where: { id: req.user.userId }, data: { email } })
     res.status(200).json({ success: true, message: 'Email updated successfully!' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
+// POST /api/users/transaction-pin/reset - verify OTP then set new PIN (no current PIN needed)
+router.post('/transaction-pin/reset', protect, async (req: any, res: Response) => {
+  try {
+    const { otp, newPin } = req.body
+    if (!otp || !newPin) {
+      res.status(400).json({ success: false, message: 'OTP and new PIN are required' })
+      return
+    }
+    if (newPin.length !== 4 || isNaN(Number(newPin))) {
+      res.status(400).json({ success: false, message: 'PIN must be exactly 4 digits' })
+      return
+    }
+    const pinUser = await prisma.user.findUnique({ where: { id: req.user.userId } })
+    if (!pinUser) { res.status(404).json({ success: false, message: 'User not found' }); return }
+    const np = normalizePhone(pinUser.phone)
+    const stored = otpStore[np]
+    if (!stored) { res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' }); return }
+    if (Date.now() > stored.expires) { delete otpStore[np]; res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' }); return }
+    if (stored.otp !== otp) { res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' }); return }
+    delete otpStore[np]
+    const hashed = await bcrypt.hash(newPin, 10)
+    await prisma.user.update({ where: { id: req.user.userId }, data: { transactionPin: hashed } })
+    res.status(200).json({ success: true, message: 'Transaction PIN reset successfully' })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
   }
