@@ -32,12 +32,12 @@ router.post('/create', protect, async (req: any, res: Response) => {
 // POST /api/savings/deposit
 router.post('/deposit', protect, async (req: any, res: Response) => {
   try {
-    const { goalId, amount } = req.body
+    const { goalId, amount, transactionPin } = req.body
     if (!goalId || !amount) {
       res.status(400).json({ success: false, message: 'goalId and amount are required' })
       return
     }
-    const result = await depositToGoal({ userId: req.user.userId, goalId, amount })
+    const result = await depositToGoal({ userId: req.user.userId, goalId, amount, transactionPin })
     res.status(200).json({ success: true, message: result.message, data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
@@ -47,12 +47,12 @@ router.post('/deposit', protect, async (req: any, res: Response) => {
 // POST /api/savings/withdraw
 router.post('/withdraw', protect, async (req: any, res: Response) => {
   try {
-    const { goalId } = req.body
+    const { goalId, transactionPin } = req.body
     if (!goalId) {
       res.status(400).json({ success: false, message: 'goalId is required' })
       return
     }
-    const result = await withdrawFromGoal({ userId: req.user.userId, goalId })
+    const result = await withdrawFromGoal({ userId: req.user.userId, goalId, transactionPin })
     res.status(200).json({ success: true, message: result.message, data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })

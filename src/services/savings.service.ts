@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
 
 // Create a new savings goal
@@ -82,6 +83,7 @@ export const depositToGoal = async (data: {
   userId: string
   goalId: string
   amount: number
+  transactionPin: string
 }) => {
   if (data.amount <= 0) throw new Error('Amount must be greater than 0')
 
@@ -94,6 +96,14 @@ export const depositToGoal = async (data: {
   if (!wallet) throw new Error('Wallet not found')
   if (wallet.isLocked) throw new Error('Your wallet is locked')
   if (wallet.balance < data.amount) throw new Error('Insufficient balance')
+
+  const depUser = await prisma.user.findUnique({ where: { id: data.userId } })
+  if (!depUser) throw new Error('User not found')
+  if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+    if (!depUser.transactionPin) throw new Error('Please set a transaction PIN first')
+    const pinOk = await bcrypt.compare(data.transactionPin, depUser.transactionPin)
+    if (!pinOk) throw new Error('Incorrect transaction PIN')
+  }
 
   const newCurrentAmount = goal.currentAmount + data.amount
   const isCompleted = newCurrentAmount >= goal.goalAmount
@@ -150,6 +160,7 @@ export const depositToGoal = async (data: {
 export const withdrawFromGoal = async (data: {
   userId: string
   goalId: string
+  transactionPin: string
 }) => {
   const goal = await prisma.savingsGoal.findUnique({ where: { id: data.goalId } })
   if (!goal) throw new Error('Savings goal not found')
@@ -159,6 +170,14 @@ export const withdrawFromGoal = async (data: {
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: data.userId } })
   if (!wallet) throw new Error('Wallet not found')
+
+  const wdUser = await prisma.user.findUnique({ where: { id: data.userId } })
+  if (!wdUser) throw new Error('User not found')
+  if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+    if (!wdUser.transactionPin) throw new Error('Please set a transaction PIN first')
+    const wpinOk = await bcrypt.compare(data.transactionPin, wdUser.transactionPin)
+    if (!wpinOk) throw new Error('Incorrect transaction PIN')
+  }
 
   const now = new Date()
   const targetDate = new Date(goal.targetDate)
