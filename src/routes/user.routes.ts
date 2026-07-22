@@ -167,7 +167,7 @@ router.post('/send-otp', async (req: Request, res: Response) => {
     otpStore[normalizedPhone] = { otp, expires }
     const e164Phone = formatE164(phone, dialCode || '+234')
     const termiiPhone = e164Phone.replace(/^\+/, '')
-    const smsResult = await sendOTPviaTermii(termiiPhone, `Your OWODE verification code is: ${otp}. Valid for 10 minutes. Do not share this code with anyone.`)
+    const smsResult = await sendOTPviaTermii(termiiPhone, `Your OWODE Verification Pin is ${otp}. It expires in 30 minutes. OWODE Digital Services Limited`)
     if (!smsResult.success) {
       console.error(`❌ Termii OTP send failed: ${smsResult.error}`)
       if (email) {
