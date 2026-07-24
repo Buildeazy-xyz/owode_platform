@@ -20,60 +20,70 @@ export const createSavingsGoal = async (data: {
   if (data.goalAmount <= 0) throw new Error('Goal amount must be greater than 0')
   if (new Date(data.targetDate) <= new Date()) throw new Error('Target date must be in the future')
 
-  // Deduct initial deposit if provided
-  let currentAmount = 0
-  if (data.initialDeposit && data.initialDeposit > 0) {
-    if (wallet.balance < data.initialDeposit) throw new Error('Insufficient balance for initial deposit')
+  const currentAmount = data.initialDeposit && data.initialDeposit > 0 ? data.initialDeposit : 0
 
-    await prisma.$transaction([
-      prisma.wallet.update({
+  if (currentAmount > 0 && wallet.balance < currentAmount) {
+    throw new Error('Insufficient balance for initial deposit')
+  }
+
+  // ATOMIC: deduct, create goal and record the contribution together.
+  // If any step fails the whole thing rolls back, so money can never leave
+  // the wallet without a goal existing to hold it.
+  const goal = await prisma.$transaction(async (tx) => {
+    if (currentAmount > 0) {
+      const fresh = await tx.wallet.findUnique({ where: { userId: data.userId } })
+      if (!fresh) throw new Error('Wallet not found')
+      if (fresh.balance < currentAmount) throw new Error('Insufficient balance for initial deposit')
+
+      await tx.wallet.update({
         where: { userId: data.userId },
-        data: { balance: { decrement: data.initialDeposit } }
-      }),
-      prisma.transaction.create({
+        data: { balance: { decrement: currentAmount } }
+      })
+
+      await tx.transaction.create({
         data: {
           id: uuidv4(),
           walletId: wallet.id,
           type: 'DEBIT',
-          amount: data.initialDeposit,
-          balance: wallet.balance - data.initialDeposit,
+          amount: currentAmount,
+          balance: fresh.balance - currentAmount,
           description: `Initial deposit — ${data.title}`,
           reference: `SAV-INIT-${Date.now()}`,
           status: 'SUCCESS'
         }
       })
-    ])
-    currentAmount = data.initialDeposit
-  }
-
-  const goal = await prisma.savingsGoal.create({
-    data: {
-      id: uuidv4(),
-      userId: data.userId,
-      title: data.title,
-      description: data.description,
-      goalAmount: data.goalAmount,
-      currentAmount,
-      autoDebitAmount: data.autoDebitAmount || 0,
-      autoDebitFreq: data.autoDebitFreq,
-      targetDate: new Date(data.targetDate),
-      isLocked: true,
-      status: 'ACTIVE'
     }
-  })
 
-  // Record initial deposit contribution
-  if (currentAmount > 0) {
-    await prisma.savingsContribution.create({
+    const created = await tx.savingsGoal.create({
       data: {
         id: uuidv4(),
-        goalId: goal.id,
-        amount: currentAmount,
-        type: 'MANUAL',
-        description: 'Initial deposit'
+        userId: data.userId,
+        title: data.title,
+        description: data.description,
+        goalAmount: data.goalAmount,
+        currentAmount,
+        autoDebitAmount: data.autoDebitAmount || 0,
+        autoDebitFreq: data.autoDebitFreq,
+        targetDate: new Date(data.targetDate),
+        isLocked: true,
+        status: 'ACTIVE'
       }
     })
-  }
+
+    if (currentAmount > 0) {
+      await tx.savingsContribution.create({
+        data: {
+          id: uuidv4(),
+          goalId: created.id,
+          amount: currentAmount,
+          type: 'MANUAL',
+          description: 'Initial deposit'
+        }
+      })
+    }
+
+    return created
+  })
 
   return goal
 }
