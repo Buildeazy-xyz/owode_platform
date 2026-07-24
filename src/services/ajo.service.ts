@@ -156,12 +156,15 @@ export const makeContribution = async (data: {
 
   const newBalance = wallet.balance - group.amount
 
-  await prisma.$transaction([
-    prisma.wallet.update({
+  // ATOMIC: contributor debit, cycle detection and payout all commit together.
+  // Row locks also serialise concurrent contributions, so two members paying at
+  // the same instant cannot both trigger the payout.
+  const outcome = await prisma.$transaction(async (tx) => {
+    await tx.wallet.update({
       where: { userId: data.userId },
       data: { balance: newBalance, totalPayout: { increment: group.amount } }
-    }),
-    prisma.transaction.create({
+    })
+    await tx.transaction.create({
       data: {
         walletId: wallet.id,
         type: 'DEBIT',
@@ -171,77 +174,78 @@ export const makeContribution = async (data: {
         reference: `AJO-${Date.now()}-${data.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
-    }),
-    prisma.ajoMember.update({
+    })
+    await tx.ajoMember.update({
       where: { id: member.id },
       data: { hasPaid: true }
     })
-  ])
 
-  const updatedMembers = await prisma.ajoMember.findMany({
-    where: { groupId: data.groupId }
+    const members = await tx.ajoMember.findMany({ where: { groupId: data.groupId } })
+    const everyonePaid = members.filter((m: any) => !m.isAvatar).every((m: any) => m.hasPaid)
+    if (!everyonePaid) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+
+    const nextPosition = (group.currentCycle % group.totalMembers) + 1
+    const recipient = members.find((m: any) => m.position === nextPosition)
+    if (!recipient) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+
+    const recipientWallet = await tx.wallet.findUnique({ where: { userId: recipient.userId } })
+    if (!recipientWallet) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+
+    const totalPayout = group.amount * group.totalMembers
+    const newRecipientBalance = recipientWallet.balance + totalPayout
+
+    await tx.wallet.update({
+      where: { userId: recipient.userId },
+      data: { balance: newRecipientBalance, totalSaved: { increment: totalPayout } }
+    })
+    await tx.transaction.create({
+      data: {
+        walletId: recipientWallet.id,
+        type: 'CREDIT',
+        amount: totalPayout,
+        balance: newRecipientBalance,
+        description: `Ajo payout — ${group.name} cycle ${group.currentCycle + 1}`,
+        reference: `PAYOUT-${Date.now()}-${recipient.userId.slice(0, 8)}`,
+        status: 'SUCCESS'
+      }
+    })
+    await tx.ajoGroup.update({
+      where: { id: data.groupId },
+      data: { currentCycle: { increment: 1 } }
+    })
+    await tx.ajoMember.updateMany({
+      where: { groupId: data.groupId },
+      data: { hasPaid: false }
+    })
+
+    return { members, paid: true, recipient, totalPayout }
   })
 
-  const allPaid = updatedMembers.filter((m: any) => !m.isAvatar).every((m: any) => m.hasPaid)
+  const updatedMembers = outcome.members
 
-  if (allPaid) {
-    const nextPosition = (group.currentCycle % group.totalMembers) + 1
-    const recipient = updatedMembers.find((m: any) => m.position === nextPosition)
-
-    if (recipient) {
-      const recipientWallet = await prisma.wallet.findUnique({ where: { userId: recipient.userId } })
-      if (recipientWallet) {
-        const totalPayout = group.amount * group.totalMembers
-        const newRecipientBalance = recipientWallet.balance + totalPayout
-
-        await prisma.$transaction([
-          prisma.wallet.update({
-            where: { userId: recipient.userId },
-            data: { balance: newRecipientBalance, totalSaved: { increment: totalPayout } }
-          }),
-          prisma.transaction.create({
-            data: {
-              walletId: recipientWallet.id,
-              type: 'CREDIT',
-              amount: totalPayout,
-              balance: newRecipientBalance,
-              description: `Ajo payout — ${group.name} cycle ${group.currentCycle + 1}`,
-              reference: `PAYOUT-${Date.now()}-${recipient.userId.slice(0, 8)}`,
-              status: 'SUCCESS'
-            }
-          }),
-          prisma.ajoGroup.update({
-            where: { id: data.groupId },
-            data: { currentCycle: { increment: 1 } }
-          })
-        ])
-
-        await prisma.ajoMember.updateMany({
-          where: { groupId: data.groupId },
-          data: { hasPaid: false }
+  if (outcome.paid && outcome.recipient) {
+    // Notification stays outside the transaction on purpose — a failed SMS or
+    // email must never roll back a payout that already committed.
+    const recipientUser = await prisma.user.findUnique({ where: { id: outcome.recipient.userId } })
+    if (recipientUser) {
+      try {
+        await notify.ajoPayout({
+          phone: recipientUser.phone,
+          email: recipientUser.email,
+          amount: outcome.totalPayout,
+          groupName: group.name,
+          fullName: recipientUser.fullName
         })
+      } catch (e) {}
+    }
 
-        const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
-        const senderUser = await prisma.user.findUnique({ where: { id: data.userId } })
-        if (recipientUser) {
-          await notify.ajoPayout({
-            phone: recipientUser.phone,
-            email: recipientUser.email,
-            amount: totalPayout,
-            groupName: group.name,
-            fullName: recipientUser.fullName
-          })
-        }
-
-        return {
-          contributed: true,
-          allPaid: true,
-          payoutSent: true,
-          payoutTo: recipient.userId,
-          payoutAmount: totalPayout,
-          nextCycle: group.currentCycle + 1
-        }
-      }
+    return {
+      contributed: true,
+      allPaid: true,
+      payoutSent: true,
+      payoutTo: outcome.recipient.userId,
+      payoutAmount: outcome.totalPayout,
+      nextCycle: group.currentCycle + 1
     }
   }
 
