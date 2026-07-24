@@ -70,9 +70,10 @@ router.get('/groups/:id', protect, async (req: any, res: Response) => {
 // POST /api/ajo/contribute
 router.post('/contribute', protect, async (req: any, res: Response) => {
   try {
-    const { groupId } = req.body
+    const { groupId, transactionPin } = req.body
     if (!groupId) { res.status(400).json({ success: false, message: 'groupId is required' }); return }
-    const result = await makeContribution({ groupId, userId: req.user.userId })
+    if (!transactionPin) { res.status(400).json({ success: false, message: 'Transaction PIN is required' }); return }
+    const result = await makeContribution({ groupId, userId: req.user.userId, transactionPin })
     res.status(200).json({ success: true, message: 'Contribution successful', data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })

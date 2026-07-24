@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import bcrypt from 'bcryptjs'
 import { notify } from './notification.service'
 // Create a new Ajo group
 export const createAjoGroup = async (data: {
@@ -118,6 +119,7 @@ export const getGroupById = async (groupId: string) => {
 export const makeContribution = async (data: {
   groupId: string
   userId: string
+  transactionPin: string
 }) => {
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
@@ -142,6 +144,15 @@ export const makeContribution = async (data: {
   if (!wallet) throw new Error('Wallet not found')
   if (wallet.isLocked) throw new Error('Your wallet is locked')
   if (wallet.balance < group.amount) throw new Error(`Insufficient balance. You need ₦${group.amount.toLocaleString()}`)
+
+  // Verify transaction PIN before any money moves
+  const contribUser = await prisma.user.findUnique({ where: { id: data.userId } })
+  if (!contribUser) throw new Error('User not found')
+  if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+    if (!contribUser.transactionPin) throw new Error('Please set a transaction PIN first')
+    const pinOk = await bcrypt.compare(data.transactionPin, contribUser.transactionPin)
+    if (!pinOk) throw new Error('Invalid transaction PIN')
+  }
 
   const newBalance = wallet.balance - group.amount
 

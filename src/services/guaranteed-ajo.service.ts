@@ -115,13 +115,11 @@ export const makeGuaranteedContribution = async (data: {
   const user = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!user) throw new Error('User not found')
 
-  const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
-  if (!isPinValid) throw new Error('Invalid transaction PIN')
-// Replace PIN verification section:
-if (data.transactionPin !== 'BIOMETRIC_AUTH') {
-  const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
-  if (!isPinValid) throw new Error('Invalid transaction PIN')
-}
+  if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+    if (!user.transactionPin) throw new Error('Please set a transaction PIN first')
+    const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
+    if (!isPinValid) throw new Error('Invalid transaction PIN')
+  }
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
     include: { members: { include: { user: true } } }
