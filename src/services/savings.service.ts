@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import { sendPush } from '../utils/push'
 import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -289,4 +290,138 @@ export const getSavingsGoal = async (goalId: string, userId: string) => {
     daysLeft: Math.max(0, Math.ceil((new Date(goal.targetDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
     canWithdrawFree: new Date() >= new Date(goal.targetDate)
   }
+}
+
+// ---------------------------------------------------------------------------
+// AUTO-DEBIT RUNNER  (POST /api/cron/auto-debit)
+// Mirrors the manual deposit path: every movement inside one $transaction
+// with a fresh in-lock balance read, always writing a matching Transaction row.
+// ---------------------------------------------------------------------------
+
+const FREQ_DAYS: Record<string, number> = { DAILY: 1, WEEKLY: 7, MONTHLY: 30 }
+
+export const runAutoDebits = async () => {
+  const now = new Date()
+  const result = { checked: 0, debited: 0, skippedNotDue: 0, shortBalance: 0, completed: 0, errors: 0 }
+
+  const goals = await prisma.savingsGoal.findMany({
+    where: {
+      status: 'ACTIVE',
+      isActive: true,
+      autoDebitAmount: { gt: 0 },
+      NOT: { autoDebitFreq: null }
+    },
+    include: { user: { select: { id: true, fullName: true, pushToken: true } } }
+  })
+
+  for (const goal of goals) {
+    result.checked++
+
+    if (new Date(goal.targetDate).getTime() < now.getTime()) {
+      result.skippedNotDue++
+      continue
+    }
+
+    const days = FREQ_DAYS[String(goal.autoDebitFreq)] || 7
+    if (goal.lastAutoDebitAt) {
+      const elapsed = now.getTime() - new Date(goal.lastAutoDebitAt).getTime()
+      if (elapsed < days * 86400000 - 7200000) {
+        result.skippedNotDue++
+        continue
+      }
+    }
+
+    try {
+      const outcome = await prisma.$transaction(async (tx) => {
+        const fresh = await tx.savingsGoal.findUnique({ where: { id: goal.id } })
+        if (!fresh || fresh.status !== 'ACTIVE') return 'skip'
+
+        const remaining = fresh.goalAmount - fresh.currentAmount
+        if (remaining <= 0) {
+          await tx.savingsGoal.update({
+            where: { id: fresh.id },
+            data: { status: 'COMPLETED', isCompleted: true }
+          })
+          return 'complete'
+        }
+
+        const amount = Math.min(fresh.autoDebitAmount, remaining)
+
+        const wallet = await tx.wallet.findUnique({ where: { userId: fresh.userId } })
+        if (!wallet) return 'skip'
+        if (wallet.balance < amount) return 'short'
+
+        await tx.wallet.update({
+          where: { userId: fresh.userId },
+          data: { balance: { decrement: amount } }
+        })
+
+        await tx.transaction.create({
+          data: {
+            id: uuidv4(),
+            walletId: wallet.id,
+            type: 'DEBIT',
+            amount,
+            balance: wallet.balance - amount,
+            description: `Auto-save \u2014 ${fresh.title}`,
+            reference: `SAV-AUTO-${Date.now()}-${fresh.id.slice(0, 8)}`,
+            status: 'SUCCESS'
+          }
+        })
+
+        await tx.savingsContribution.create({
+          data: {
+            id: uuidv4(),
+            goalId: fresh.id,
+            amount,
+            type: 'AUTO_DEBIT',
+            description: `Automatic ${String(fresh.autoDebitFreq).toLowerCase()} saving`
+          }
+        })
+
+        const newTotal = fresh.currentAmount + amount
+        const reached = newTotal >= fresh.goalAmount
+
+        await tx.savingsGoal.update({
+          where: { id: fresh.id },
+          data: {
+            currentAmount: { increment: amount },
+            lastAutoDebitAt: now,
+            ...(reached ? { status: 'COMPLETED', isCompleted: true } : {})
+          }
+        })
+
+        return reached ? 'debited-complete' : 'debited'
+      })
+
+      if (outcome === 'short') {
+        result.shortBalance++
+        await sendPush(
+          [goal.user?.pushToken],
+          'Auto-save skipped',
+          `We could not move your auto-save for "${goal.title}" \u2014 your wallet balance was too low. Top up and it will try again.`,
+          { type: 'auto_debit_skipped', goalId: goal.id }
+        )
+      } else if (outcome === 'complete') {
+        result.completed++
+      } else if (outcome === 'debited' || outcome === 'debited-complete') {
+        result.debited++
+        if (outcome === 'debited-complete') result.completed++
+        await sendPush(
+          [goal.user?.pushToken],
+          outcome === 'debited-complete' ? 'Savings goal reached' : 'Auto-save successful',
+          outcome === 'debited-complete'
+            ? `You have reached your target for "${goal.title}". Well done.`
+            : `We moved your ${String(goal.autoDebitFreq).toLowerCase()} auto-save into "${goal.title}".`,
+          { type: 'auto_debit', goalId: goal.id }
+        )
+      }
+    } catch (e: any) {
+      result.errors++
+      console.log('auto-debit failed for goal', goal.id, e?.message)
+    }
+  }
+
+  console.log('auto-debit run:', result)
+  return result
 }

@@ -187,6 +187,7 @@ model SavingsGoal {
   autoDebitAmount Float           @default(0)
   autoDebitFreq   Frequency?
   autoDebitDay    Int?
+  lastAutoDebitAt DateTime?
   targetDate      DateTime
   isLocked        Boolean         @default(true)
   isCompleted     Boolean         @default(false)

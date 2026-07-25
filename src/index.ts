@@ -14,6 +14,7 @@ import trustRoutes from './routes/trust.routes'
 import recoveryRoutes from './routes/recovery.routes'
 import faceVerificationRoutes from './routes/face-verification.routes'
 import savingsRoutes from './routes/savings.routes'
+import cronRoutes from './routes/cron.routes'
 const app = express()
 
 app.use(helmet())
@@ -43,6 +44,7 @@ app.use('/api/trust', trustRoutes)
 app.use('/api/recovery', recoveryRoutes)
 app.use('/api/face', faceVerificationRoutes)
 app.use('/api/savings', savingsRoutes)
+app.use('/api/cron', cronRoutes)
 
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() })

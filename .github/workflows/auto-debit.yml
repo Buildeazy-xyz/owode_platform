@@ -1,0 +1,20 @@
+name: Auto-debit savings
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 07:00 West Africa Time
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wake Render (free tier sleeps)
+        run: curl -s -o /dev/null https://owode-platform.onrender.com/ || true
+      - name: Give it a moment
+        run: sleep 45
+      - name: Trigger auto-debit
+        run: |
+          curl -sS -X POST https://owode-platform.onrender.com/api/cron/auto-debit \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -w "\nHTTP %{http_code}\n"
