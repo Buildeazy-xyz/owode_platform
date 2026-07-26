@@ -40,6 +40,7 @@ enum Role {
   CONTRIBUTOR
   AGENT
   ADMIN
+  PLATFORM
 }
 
 model Wallet {

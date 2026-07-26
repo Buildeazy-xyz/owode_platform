@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import { creditPlatform } from './platform.service'
 import { sendPush } from '../utils/push'
 import bcrypt from 'bcryptjs'
 import { v4 as uuidv4 } from 'uuid'
@@ -203,32 +204,36 @@ export const withdrawFromGoal = async (data: {
     withdrawAmount = goal.currentAmount - penaltyAmount
   }
 
-  await prisma.$transaction([
-    prisma.wallet.update({
+  const withdrawRef = `SAV-WITH-${Date.now()}`
+
+  await prisma.$transaction(async (tx) => {
+    const freshWallet = await tx.wallet.findUnique({ where: { userId: data.userId } })
+    if (!freshWallet) throw new Error('Wallet not found')
+
+    await tx.wallet.update({
       where: { userId: data.userId },
       data: { balance: { increment: withdrawAmount } }
-    }),
-    prisma.transaction.create({
+    })
+
+    await tx.transaction.create({
       data: {
         id: uuidv4(),
-        walletId: wallet.id,
+        walletId: freshWallet.id,
         type: 'CREDIT',
         amount: withdrawAmount,
-        balance: wallet.balance + withdrawAmount,
+        balance: freshWallet.balance + withdrawAmount,
         description: `Savings withdrawal — ${goal.title}${isEarly ? ' (early withdrawal)' : ''}`,
-        reference: `SAV-WITH-${Date.now()}`,
+        reference: withdrawRef,
         status: 'SUCCESS'
       }
-    }),
-    prisma.savingsGoal.update({
+    })
+
+    await tx.savingsGoal.update({
       where: { id: data.goalId },
-      data: {
-        status: 'WITHDRAWN',
-        isActive: false,
-        currentAmount: 0
-      }
-    }),
-    prisma.savingsContribution.create({
+      data: { status: 'WITHDRAWN', isActive: false, currentAmount: 0 }
+    })
+
+    await tx.savingsContribution.create({
       data: {
         id: uuidv4(),
         goalId: data.goalId,
@@ -237,7 +242,26 @@ export const withdrawFromGoal = async (data: {
         description: isEarly ? `Early withdrawal — ${goal.penaltyPercent}% penalty applied` : 'Matured withdrawal'
       }
     })
-  ])
+
+    // The penalty is company income. Credit it somewhere real, with its own
+    // ledger row, so it can be reported and reconciled.
+    if (penaltyAmount > 0) {
+      await tx.savingsContribution.create({
+        data: {
+          id: uuidv4(),
+          goalId: data.goalId,
+          amount: penaltyAmount,
+          type: 'PENALTY',
+          description: `Early withdrawal penalty (${goal.penaltyPercent}%)`
+        }
+      })
+      await creditPlatform(tx, {
+        amount: penaltyAmount,
+        description: `Early withdrawal penalty — ${goal.title}`,
+        reference: `FEE-PEN-${Date.now()}`
+      })
+    }
+  })
 
   return {
     success: true,
