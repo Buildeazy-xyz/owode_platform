@@ -212,3 +212,36 @@ export const transferFunds = async (
     reference
   }
 }
+
+// Full transaction list for the wallet screen and statement export.
+// getWalletBalance stays capped at 10 for the dashboard preview; this one
+// returns the real set so totals and filters are computed on actual data.
+export const getWalletTransactions = async (
+  userId: string,
+  opts?: { from?: string; to?: string; type?: string }
+) => {
+  const where: any = {}
+  if (opts?.from || opts?.to) {
+    where.createdAt = {}
+    if (opts.from) where.createdAt.gte = new Date(opts.from)
+    if (opts.to) {
+      const end = new Date(opts.to)
+      end.setHours(23, 59, 59, 999)
+      where.createdAt.lte = end
+    }
+  }
+  if (opts?.type === 'CREDIT' || opts?.type === 'DEBIT') where.type = opts.type
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId },
+    include: {
+      transactions: {
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 1000
+      }
+    }
+  })
+  if (!wallet) throw new Error('Wallet not found')
+  return wallet
+}

@@ -1,10 +1,24 @@
 import { Router, Request, Response } from 'express'
-import { getWalletBalance, creditWallet, debitWallet, transferFunds } from '../services/wallet.service'
+import { getWalletBalance, creditWallet, debitWallet, transferFunds, getWalletTransactions} from '../services/wallet.service'
 import { protect } from '../middleware/auth.middleware'
 
 const router = Router()
 
 // GET /api/wallet/balance
+router.get('/transactions', protect, async (req: any, res: Response) => {
+  try {
+    const { from, to, type } = req.query
+    const wallet = await getWalletTransactions(req.user.userId, {
+      from: from ? String(from) : undefined,
+      to: to ? String(to) : undefined,
+      type: type ? String(type) : undefined
+    })
+    res.status(200).json({ success: true, data: wallet })
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
+  }
+})
+
 router.get('/balance', protect, async (req: any, res: Response) => {
   try {
     const wallet = await getWalletBalance(req.user.userId)
