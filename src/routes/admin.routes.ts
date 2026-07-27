@@ -319,6 +319,34 @@ router.post('/notifications/send', protect, adminOnly, async (req: any, res: Res
     res.status(500).json({ success: false, message: error.message })
   }
 })
+// POST /api/admin/kyc/reject/:userId  { reason }
+// Clears the submitted identifiers so the customer can resubmit, and tells
+// them why. Rejection without a reason is a dead end for the customer.
+router.post('/kyc/reject/:userId', protect, adminOnly, async (req: any, res: Response) => {
+  try {
+    const { reason } = req.body
+    if (!reason || String(reason).trim().length < 5) {
+      res.status(400).json({ success: false, message: 'A reason is required' })
+      return
+    }
+    const user = await prisma.user.update({
+      where: { id: req.params.userId },
+      data: { bvn: null, nin: null, isVerified: false },
+      select: { id: true, fullName: true, pushToken: true }
+    })
+    const { sendPush } = await import('../utils/push')
+    await sendPush(
+      [user.pushToken],
+      'Verification not approved',
+      `Your identity verification could not be approved: ${String(reason).trim()}. Please resubmit from the KYC screen.`,
+      { type: 'kyc_rejected' }
+    )
+    res.status(200).json({ success: true, message: 'Rejected and customer notified' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // GET /api/admin/kyc/pending
 router.get('/kyc/pending', protect, adminOnly, async (req: any, res: Response) => {
   try {
