@@ -189,6 +189,7 @@ model SavingsGoal {
   autoDebitFreq   Frequency?
   autoDebitDay    Int?
   lastAutoDebitAt DateTime?
+  maturityNotifiedAt DateTime?
   targetDate      DateTime
   isLocked        Boolean         @default(true)
   isCompleted     Boolean         @default(false)

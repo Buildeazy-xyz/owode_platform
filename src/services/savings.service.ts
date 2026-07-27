@@ -341,7 +341,26 @@ export const runAutoDebits = async () => {
   for (const goal of goals) {
     result.checked++
 
-    if (new Date(goal.targetDate).getTime() < now.getTime()) {
+    // Target date is INCLUSIVE - the customer saves through the final day.
+    const lastDay = new Date(goal.targetDate)
+    lastDay.setHours(23, 59, 59, 999)
+    if (lastDay.getTime() < now.getTime()) {
+      // Matured. Tell them once, then leave it alone.
+      if (!goal.maturityNotifiedAt) {
+        const short = (goal.goalAmount || 0) - (goal.currentAmount || 0)
+        await prisma.savingsGoal.update({
+          where: { id: goal.id },
+          data: { maturityNotifiedAt: now }
+        })
+        await sendPush(
+          [goal.user?.pushToken],
+          short > 0 ? 'Savings plan ended' : 'Savings goal complete',
+          short > 0
+            ? `"${goal.title}" has reached its target date with \u20a6${goal.currentAmount.toLocaleString()} saved. You can withdraw it now with no penalty.`
+            : `"${goal.title}" is complete. You can withdraw it now with no penalty.`,
+          { type: 'savings_matured', goalId: goal.id }
+        )
+      }
       result.skippedNotDue++
       continue
     }
