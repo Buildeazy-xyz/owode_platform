@@ -84,7 +84,7 @@ enum TransactionStatus {
 
 model AjoGroup {
   id                  String      @id @default(uuid())
-  name                String      @unique
+  name                String
   amount              Float
   frequency           Frequency
   totalMembers        Int
@@ -98,6 +98,13 @@ model AjoGroup {
   createdBy           String
   startDate           DateTime?
   nextPayoutDate      DateTime?
+  nextDueDate         DateTime?
+  inviteCode          String?     @unique
+  approvalStatus      String      @default("DRAFT")
+  approvedAt          DateTime?
+  approvedBy          String?
+  rejectionReason     String?
+  isUserCreated       Boolean     @default(false)
   createdAt           DateTime    @default(now())
 
   members             AjoMember[]
@@ -114,6 +121,8 @@ model AjoMember {
   isAvatar        Boolean     @default(false)
   payoutReceived  Boolean     @default(false)
   joinedAt        DateTime    @default(now())
+  lastRemindedCycle Int?
+  lastRemindedStage String?
 
   group           AjoGroup    @relation(fields: [groupId], references: [id])
   user            User        @relation(fields: [userId], references: [id])
