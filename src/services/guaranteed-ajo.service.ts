@@ -68,6 +68,9 @@ if (user.trustScore < 35) throw new Error('Trust score too low to join Guarantee
     where: { id: data.groupId },
     include: { members: { include: { user: true } } }
   })
+  if (group && (group as any).isUserCreated && (group as any).approvalStatus !== 'APPROVED') {
+    throw new Error('This group has not been approved yet. Contributions cannot start.')
+  }
 
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is no longer active')

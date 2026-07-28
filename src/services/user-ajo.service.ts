@@ -93,16 +93,26 @@ export const joinByCode = async (data: { userId: string; code: string }) => {
   if (!group) throw new Error('No group found with that code')
   if (group.approvalStatus === 'REJECTED') throw new Error('This group is not available')
   if (group.approvalStatus === 'APPROVED') throw new Error('This group has already started')
-  if (group.members.length >= group.totalMembers) throw new Error('This group is already full')
-  if (group.members.find(m => m.userId === data.userId)) throw new Error('You are already in this group')
+  if (group.members.filter(m => m.status === 'APPROVED').length >= group.totalMembers) throw new Error('This group is already full')
+  if (group.members.find(m => m.userId === data.userId)) throw new Error('You have already requested to join this group')
 
-  const position = group.members.length + 1
+  const approved = group.members.filter(m => m.status === 'APPROVED')
 
   const result = await prisma.$transaction(async (tx) => {
+    // Requests wait for the creator. Anyone can have the link; only the
+    // creator decides who is actually in the group.
     await tx.ajoMember.create({
-      data: { id: uuidv4(), groupId: group.id, userId: data.userId, position }
+      data: {
+        id: uuidv4(),
+        groupId: group.id,
+        userId: data.userId,
+        status: 'PENDING',
+        requestedAt: new Date()
+      }
     })
-    const count = await tx.ajoMember.count({ where: { groupId: group.id } })
+    const count = await tx.ajoMember.count({
+      where: { groupId: group.id, status: 'APPROVED' }
+    })
     // Full -> goes to the admin queue automatically. No WhatsApp needed.
     if (count >= group.totalMembers) {
       await tx.ajoGroup.update({
@@ -126,7 +136,7 @@ export const joinByCode = async (data: { userId: string; code: string }) => {
     )
   }
 
-  return { position, ...result }
+  return { pending: true, ...result }
 }
 
 export const setPayoutOrder = async (data: {
@@ -328,4 +338,123 @@ export const runAjoReminders = async () => {
 
   console.log('ajo reminders:', result)
   return result
+}
+
+
+// ---------------------------------------------------------------------------
+// The creator decides who is in the group. Anyone can hold the link; holding
+// it only gets you into the queue.
+// ---------------------------------------------------------------------------
+
+export const getJoinRequests = async (userId: string, groupId: string) => {
+  const group = await prisma.ajoGroup.findUnique({
+    where: { id: groupId },
+    include: {
+      members: {
+        include: { user: { select: { id: true, fullName: true, phone: true, trustScore: true, isVerified: true } } },
+        orderBy: { requestedAt: 'asc' }
+      }
+    }
+  })
+  if (!group) throw new Error('Group not found')
+  if (group.createdBy !== userId) throw new Error('Only the creator can see join requests')
+  return {
+    pending: group.members.filter(m => m.status === 'PENDING'),
+    approved: group.members.filter(m => m.status === 'APPROVED').sort((a, b) => (a.position || 0) - (b.position || 0)),
+    totalMembers: group.totalMembers,
+    approvalStatus: group.approvalStatus
+  }
+}
+
+export const respondToRequest = async (data: {
+  userId: string
+  memberId: string
+  accept: boolean
+}) => {
+  const member = await prisma.ajoMember.findUnique({
+    where: { id: data.memberId },
+    include: { group: true, user: { select: { pushToken: true } } }
+  })
+  if (!member) throw new Error('Request not found')
+  if (member.group.createdBy !== data.userId) throw new Error('Only the creator can do this')
+  if (member.group.approvalStatus === 'APPROVED') throw new Error('The group has already started')
+
+  if (!data.accept) {
+    await prisma.ajoMember.delete({ where: { id: data.memberId } })
+    await sendPush(
+      [member.user?.pushToken],
+      'Ajo request declined',
+      `Your request to join "${member.group.name}" was not accepted.`,
+      { type: 'ajo_declined', groupId: member.groupId }
+    )
+    return { removed: true }
+  }
+
+  const out = await prisma.$transaction(async (tx) => {
+    const approvedCount = await tx.ajoMember.count({
+      where: { groupId: member.groupId, status: 'APPROVED' }
+    })
+    if (approvedCount >= member.group.totalMembers) throw new Error('The group is already full')
+
+    await tx.ajoMember.update({
+      where: { id: data.memberId },
+      data: { status: 'APPROVED', position: approvedCount + 1 }
+    })
+
+    const nowFull = approvedCount + 1 >= member.group.totalMembers
+    if (nowFull) {
+      await tx.ajoGroup.update({
+        where: { id: member.groupId },
+        data: { approvalStatus: 'PENDING' }
+      })
+    }
+    return { position: approvedCount + 1, full: nowFull }
+  })
+
+  await sendPush(
+    [member.user?.pushToken],
+    'You are in the group',
+    `You have been accepted into "${member.group.name}". You are number ${out.position} in the payout order.`,
+    { type: 'ajo_accepted', groupId: member.groupId }
+  )
+
+  return out
+}
+
+export const removeMember = async (data: { userId: string; memberId: string }) => {
+  const member = await prisma.ajoMember.findUnique({
+    where: { id: data.memberId },
+    include: { group: true, user: { select: { pushToken: true } } }
+  })
+  if (!member) throw new Error('Member not found')
+  if (member.group.createdBy !== data.userId) throw new Error('Only the creator can remove members')
+  if (member.group.approvalStatus === 'APPROVED') throw new Error('Members cannot be removed once the group has started')
+  if (member.userId === member.group.createdBy) throw new Error('You cannot remove yourself')
+
+  await prisma.$transaction(async (tx) => {
+    await tx.ajoMember.delete({ where: { id: data.memberId } })
+    // close the gap in the payout order
+    const rest = await tx.ajoMember.findMany({
+      where: { groupId: member.groupId, status: 'APPROVED' },
+      orderBy: { position: 'asc' }
+    })
+    for (const m of rest) {
+      await tx.ajoMember.update({ where: { id: m.id }, data: { position: -(m.position || 0) } })
+    }
+    for (let i = 0; i < rest.length; i++) {
+      await tx.ajoMember.update({ where: { id: rest[i].id }, data: { position: i + 1 } })
+    }
+    await tx.ajoGroup.update({
+      where: { id: member.groupId },
+      data: { approvalStatus: 'DRAFT' }
+    })
+  })
+
+  await sendPush(
+    [member.user?.pushToken],
+    'Removed from Ajo group',
+    `You have been removed from "${member.group.name}" before it started.`,
+    { type: 'ajo_removed', groupId: member.groupId }
+  )
+  return { removed: true }
 }

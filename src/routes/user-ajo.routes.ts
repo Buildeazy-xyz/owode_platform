@@ -2,7 +2,8 @@ import { Router, Response } from 'express'
 import { protect } from '../middleware/auth.middleware'
 import {
   createUserAjo, joinByCode, setPayoutOrder, getMyAjoGroups,
-  getPendingApproval, approveAjo, rejectAjo
+  getPendingApproval, approveAjo, rejectAjo,
+  getJoinRequests, respondToRequest, removeMember
 } from '../services/user-ajo.service'
 import { prisma } from '../config/database'
 
@@ -95,6 +96,38 @@ router.get('/mine', protect, async (req: any, res: Response) => {
     res.status(200).json({ success: true, data: await getMyAjoGroups(req.user.userId) })
   } catch (e: any) {
     res.status(500).json({ success: false, message: e.message })
+  }
+})
+
+// GET /api/user-ajo/requests/:groupId  - creator sees who wants in
+router.get('/requests/:groupId', protect, async (req: any, res: Response) => {
+  try {
+    res.status(200).json({ success: true, data: await getJoinRequests(req.user.userId, req.params.groupId) })
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e.message })
+  }
+})
+
+// POST /api/user-ajo/requests/:memberId/respond   { accept: true|false }
+router.post('/requests/:memberId/respond', protect, async (req: any, res: Response) => {
+  try {
+    const out = await respondToRequest({
+      userId: req.user.userId,
+      memberId: req.params.memberId,
+      accept: !!req.body?.accept
+    })
+    res.status(200).json({ success: true, data: out })
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e.message })
+  }
+})
+
+// DELETE /api/user-ajo/member/:memberId  - creator removes someone before the start
+router.delete('/member/:memberId', protect, async (req: any, res: Response) => {
+  try {
+    res.status(200).json({ success: true, data: await removeMember({ userId: req.user.userId, memberId: req.params.memberId }) })
+  } catch (e: any) {
+    res.status(400).json({ success: false, message: e.message })
   }
 })
 

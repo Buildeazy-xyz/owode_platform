@@ -53,6 +53,9 @@ export const joinAjoGroup = async (data: {
     where: { id: data.groupId },
     include: { members: true }
   })
+  if (group && (group as any).isUserCreated && (group as any).approvalStatus !== 'APPROVED') {
+    throw new Error('This group has not been approved yet. Contributions cannot start.')
+  }
 
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is no longer active')

@@ -116,13 +116,15 @@ model AjoMember {
   id              String      @id @default(uuid())
   groupId         String
   userId          String
-  position        Int
+  position        Int?
   hasPaid         Boolean     @default(false)
   isAvatar        Boolean     @default(false)
   payoutReceived  Boolean     @default(false)
   joinedAt        DateTime    @default(now())
   lastRemindedCycle Int?
   lastRemindedStage String?
+  status          String      @default("APPROVED")
+  requestedAt     DateTime?
 
   group           AjoGroup    @relation(fields: [groupId], references: [id])
   user            User        @relation(fields: [userId], references: [id])
