@@ -248,3 +248,84 @@ export const rejectAjo = async (groupId: string, adminId: string, reason: string
 
   return { success: true }
 }
+
+
+// ---------------------------------------------------------------------------
+// REMINDERS
+// Runs on the daily cron alongside auto-debit. Push only, no SMS cost.
+// Stages, tracked per member per cycle so nobody is told the same thing twice:
+//   DAY_BEFORE  - weekly/monthly only, everyone in the group
+//   DUE_TODAY   - unpaid members only
+//   OVERDUE     - unpaid members, the morning after
+// ---------------------------------------------------------------------------
+
+export const runAjoReminders = async () => {
+  const now = new Date()
+  const today = new Date(now); today.setHours(0, 0, 0, 0)
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1)
+  const result = { checked: 0, dayBefore: 0, dueToday: 0, overdue: 0 }
+
+  const groups = await prisma.ajoGroup.findMany({
+    where: { approvalStatus: 'APPROVED', isActive: true, NOT: { nextDueDate: null } },
+    include: {
+      members: { include: { user: { select: { id: true, pushToken: true, fullName: true } } } }
+    }
+  })
+
+  for (const g of groups) {
+    result.checked++
+    const due = new Date(g.nextDueDate as Date)
+    const dueDay = new Date(due); dueDay.setHours(0, 0, 0, 0)
+    const money = '\u20a6' + g.amount.toLocaleString()
+
+    let stage: 'DAY_BEFORE' | 'DUE_TODAY' | 'OVERDUE' | null = null
+    if (dueDay.getTime() === tomorrow.getTime() && g.frequency !== 'DAILY') stage = 'DAY_BEFORE'
+    else if (dueDay.getTime() === today.getTime()) stage = 'DUE_TODAY'
+    else if (dueDay.getTime() < today.getTime()) stage = 'OVERDUE'
+    if (!stage) continue
+
+    // DAY_BEFORE goes to everyone; the rest only to those who have not paid.
+    const targets = stage === 'DAY_BEFORE'
+      ? g.members
+      : g.members.filter(m => !m.hasPaid)
+
+    const fresh = targets.filter(m =>
+      m.lastRemindedCycle !== g.currentCycle || m.lastRemindedStage !== stage
+    )
+    if (fresh.length === 0) continue
+
+    const copy = {
+      DAY_BEFORE: {
+        title: 'Ajo contribution due tomorrow',
+        body: `Your ${money} contribution for "${g.name}" is due tomorrow. Make sure your wallet is funded.`
+      },
+      DUE_TODAY: {
+        title: 'Ajo contribution due today',
+        body: `Your ${money} contribution for "${g.name}" is due today. Pay now to keep your group on track.`
+      },
+      OVERDUE: {
+        title: 'Ajo contribution missed',
+        body: `Your ${money} contribution for "${g.name}" is overdue. Pay now so the next person can be paid out.`
+      }
+    }[stage]
+
+    await sendPush(
+      fresh.map(m => m.user?.pushToken),
+      copy.title,
+      copy.body,
+      { type: 'ajo_reminder', stage, groupId: g.id }
+    )
+
+    await prisma.ajoMember.updateMany({
+      where: { id: { in: fresh.map(m => m.id) } },
+      data: { lastRemindedCycle: g.currentCycle, lastRemindedStage: stage }
+    })
+
+    if (stage === 'DAY_BEFORE') result.dayBefore += fresh.length
+    if (stage === 'DUE_TODAY') result.dueToday += fresh.length
+    if (stage === 'OVERDUE') result.overdue += fresh.length
+  }
+
+  console.log('ajo reminders:', result)
+  return result
+}
