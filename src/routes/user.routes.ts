@@ -147,6 +147,154 @@ router.get('/referral', protect, async (req: any, res: Response) => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// PASSWORD RESET
+//
+// This endpoint takes no auth - a locked-out user has no token. That means
+// anyone on the internet can call it, so it is hardened deliberately:
+//   1. Identical response whether or not the account exists, so it cannot be
+//      used to discover which phone numbers belong to OWODE customers
+//   2. Rate limited per phone AND per IP
+//   3. Constant response time, so timing cannot leak what the text does not
+//   4. Attempts logged for the admin security view
+//   5. OTP guess attempts capped
+// ---------------------------------------------------------------------------
+
+const resetByPhone: Record<string, { count: number; reset: number }> = {}
+const resetByIp: Record<string, { count: number; reset: number }> = {}
+const resetAttempts: Record<string, { tries: number; until: number }> = {}
+
+const hitLimit = (
+  store: Record<string, { count: number; reset: number }>,
+  key: string,
+  max: number,
+  windowMs: number
+) => {
+  const now = Date.now()
+  const e = store[key]
+  if (!e || now > e.reset) { store[key] = { count: 1, reset: now + windowMs }; return false }
+  e.count++
+  return e.count > max
+}
+
+// Always take at least this long, so "found" and "not found" cannot be told
+// apart by how fast the server replies.
+const MIN_MS = 700
+const settle = async (started: number) => {
+  const left = MIN_MS - (Date.now() - started)
+  if (left > 0) await new Promise(r => setTimeout(r, left))
+}
+
+// POST /api/users/forgot-password  { phone }
+router.post('/forgot-password', async (req: Request, res: Response) => {
+  const started = Date.now()
+  const SAME_ANSWER = {
+    success: true,
+    message: 'If that number has an OWODE account, we have sent a 6-digit code to it.'
+  }
+  try {
+    const raw = String(req.body?.phone || '')
+    const phone = normalizePhone(raw)
+    const ip = String(req.headers['x-forwarded-for'] || req.ip || 'unknown').split(',')[0].trim()
+
+    if (!raw) {
+      await settle(started)
+      res.status(400).json({ success: false, message: 'Phone number is required' })
+      return
+    }
+
+    // 3 per number per hour, 20 per IP per hour
+    if (hitLimit(resetByPhone, phone, 3, 3600000) || hitLimit(resetByIp, ip, 20, 3600000)) {
+      console.log(`[reset] rate limited ip=${ip}`)
+      await settle(started)
+      res.status(429).json({ success: false, message: 'Too many attempts. Please try again later.' })
+      return
+    }
+
+    const user = await prisma.user.findUnique({ where: { phone } })
+    console.log(`[reset] requested ip=${ip} exists=${!!user}`)
+
+    if (user && user.isActive) {
+      const otp = Math.floor(100000 + Math.random() * 900000).toString()
+      otpStore[phone] = { otp, expires: Date.now() + 10 * 60 * 1000 }
+      delete resetAttempts[phone]
+      const termiiPhone = formatE164(phone, '+234').replace(/^\+/, '')
+      const sms = await sendOTPviaTermii(
+        termiiPhone,
+        `Your OWODE password reset Pin is ${otp}. It expires in 10 minutes. OWODE Digital Services Limited`
+      )
+      if (!sms.success && user.email) {
+        await sendOTPviaEmail(user.email, otp)
+      }
+    }
+
+    await settle(started)
+    res.status(200).json(SAME_ANSWER)
+  } catch (error: any) {
+    console.error('[reset] error:', error?.message)
+    await settle(started)
+    res.status(200).json(SAME_ANSWER)
+  }
+})
+
+// POST /api/users/reset-password  { phone, otp, newPassword }
+router.post('/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { otp, newPassword } = req.body
+    const phone = normalizePhone(String(req.body?.phone || ''))
+    if (!phone || !otp || !newPassword) {
+      res.status(400).json({ success: false, message: 'Phone, code and new password are required' })
+      return
+    }
+    if (String(newPassword).length < 6) {
+      res.status(400).json({ success: false, message: 'Password must be at least 6 characters' })
+      return
+    }
+
+    const att = resetAttempts[phone]
+    if (att && Date.now() < att.until) {
+      res.status(429).json({ success: false, message: 'Too many wrong codes. Try again in an hour.' })
+      return
+    }
+
+    const stored = otpStore[phone]
+    if (!stored || Date.now() > stored.expires) {
+      delete otpStore[phone]
+      res.status(400).json({ success: false, message: 'Code has expired. Please request a new one.' })
+      return
+    }
+    if (stored.otp !== otp) {
+      const cur = resetAttempts[phone] || { tries: 0, until: 0 }
+      cur.tries++
+      if (cur.tries >= 5) { cur.until = Date.now() + 3600000; cur.tries = 0; delete otpStore[phone] }
+      resetAttempts[phone] = cur
+      res.status(400).json({ success: false, message: 'Invalid code. Please try again.' })
+      return
+    }
+
+    const user = await prisma.user.findUnique({ where: { phone } })
+    if (!user) { res.status(400).json({ success: false, message: 'Invalid code. Please try again.' }); return }
+
+    delete otpStore[phone]
+    delete resetAttempts[phone]
+    const hashed = await bcrypt.hash(String(newPassword), 10)
+    await prisma.user.update({ where: { id: user.id }, data: { password: hashed } })
+    console.log(`[reset] password changed for ${user.id}`)
+
+    const { sendPush } = await import('../utils/push')
+    await sendPush(
+      [user.pushToken],
+      'Password changed',
+      'Your OWODE password was just changed. If this was not you, contact support immediately.',
+      { type: 'password_changed' }
+    )
+
+    res.status(200).json({ success: true, message: 'Password changed. You can now log in.' })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message })
+  }
+})
+
 // POST /api/users/send-otp
 router.post('/send-otp', async (req: Request, res: Response) => {
   try {
