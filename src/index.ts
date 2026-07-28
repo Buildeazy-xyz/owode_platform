@@ -22,6 +22,8 @@ app.use(helmet())
 app.use(cors({
   origin: [
     'http://localhost:3000',
+    'https://owodeagent.com',
+    'https://www.owodeagent.com',
     'http://localhost:3001',
     'https://owode.xyz',
     'https://www.owode.xyz',
