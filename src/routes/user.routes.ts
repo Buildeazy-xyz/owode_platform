@@ -539,4 +539,32 @@ router.post('/transaction-pin/reset', protect, async (req: any, res: Response) =
   }
 })
 
+// POST /api/users/lookup   { phone }  -> { fullName }
+// Returns ONLY the name. Never any other field, or the user base could be
+// enumerated. Staff and platform accounts are invisible here.
+router.post('/lookup', protect, async (req: any, res: Response) => {
+  try {
+    const digits = String(req.body?.phone || '').replace(/\D/g, '')
+    if (digits.length !== 11) {
+      res.status(400).json({ success: false, message: 'Enter a valid 11-digit number' })
+      return
+    }
+    const user = await prisma.user.findUnique({
+      where: { phone: digits },
+      select: { id: true, fullName: true, role: true, isActive: true }
+    })
+    if (!user || !user.isActive || user.role !== 'CONTRIBUTOR') {
+      res.status(404).json({ success: false, message: 'No OWODE account found for this number' })
+      return
+    }
+    if (user.id === req.user.userId) {
+      res.status(400).json({ success: false, message: 'You cannot send money to yourself' })
+      return
+    }
+    res.status(200).json({ success: true, data: { fullName: user.fullName } })
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Could not check this number' })
+  }
+})
+
 export default router
