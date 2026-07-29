@@ -60,6 +60,11 @@ export const joinAjoGroup = async (data: {
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is no longer active')
 
+  // User-created groups take no money until OWODE approves them.
+  if ((group as any).approvalStatus && (group as any).approvalStatus !== 'APPROVED') {
+    throw new Error('This group is awaiting OWODE approval. Contributions open once it is approved.')
+  }
+
   const realMembers = group.members.filter((m: any) => !m.isAvatar)
   if (realMembers.length >= group.totalMembers) {
     throw new Error('Group is full — all slots are taken')
@@ -141,6 +146,9 @@ export const makeContribution = async (data: {
 
   const member = group.members.find((m: any) => m.userId === data.userId)
   if (!member) throw new Error('You are not a member of this group')
+  if ((member as any).status && (member as any).status !== 'APPROVED') {
+    throw new Error('Your membership is still pending approval')
+  }
   if (member.hasPaid) throw new Error('You have already paid for this cycle')
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: data.userId } })
