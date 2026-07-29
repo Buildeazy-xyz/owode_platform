@@ -151,15 +151,18 @@ export const setPayoutOrder = async (data: {
   if (!group) throw new Error('Group not found')
   if (group.createdBy !== data.userId) throw new Error('Only the creator can set the payout order')
   if (group.approvalStatus === 'APPROVED') throw new Error('The order cannot change once the group has started')
-  if (data.order.length !== group.members.length) throw new Error('The order must include every member')
+  const active = group.members.filter(m => m.status === 'APPROVED')
+  if (data.order.length !== active.length) throw new Error('The order must include every approved member')
 
   await prisma.$transaction(async (tx) => {
     // Two passes so the unique [groupId, position] constraint never collides
-    for (const m of group.members) {
-      await tx.ajoMember.update({ where: { id: m.id }, data: { position: -m.position } })
+    for (const m of active) {
+      if (m.position != null) {
+        await tx.ajoMember.update({ where: { id: m.id }, data: { position: -m.position } })
+      }
     }
     for (let i = 0; i < data.order.length; i++) {
-      const m = group.members.find(x => x.userId === data.order[i])
+      const m = active.find(x => x.userId === data.order[i])
       if (!m) throw new Error('Unknown member in the order')
       await tx.ajoMember.update({ where: { id: m.id }, data: { position: i + 1 } })
     }
