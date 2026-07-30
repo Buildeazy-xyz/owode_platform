@@ -118,7 +118,7 @@ export const makeGuaranteedContribution = async (data: {
   const user = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!user) throw new Error('User not found')
 
-  if (data.transactionPin !== 'BIOMETRIC_AUTH') {
+  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
     if (!user.transactionPin) throw new Error('Please set a transaction PIN first')
     const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
     if (!isPinValid) throw new Error('Invalid transaction PIN')

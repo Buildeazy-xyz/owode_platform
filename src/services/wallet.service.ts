@@ -117,7 +117,7 @@ export const transferFunds = async (
   if (!senderUser) throw new Error('Sender not found')
 
   // Allow biometric auth bypass OR verify PIN
-  if (transactionPin !== 'BIOMETRIC_AUTH') {
+  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
     if (!senderUser.transactionPin) throw new Error('Please set a transaction PIN first')
     const isPinValid = await bcrypt.compare(transactionPin, senderUser.transactionPin)
     if (!isPinValid) throw new Error('Invalid transaction PIN')
