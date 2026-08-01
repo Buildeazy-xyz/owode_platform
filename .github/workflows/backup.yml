@@ -1,0 +1,36 @@
+name: Daily database backup
+
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 03:30 West Africa Time
+  workflow_dispatch:
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Dump all tables to JSON
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p ../backups
+          npx tsx scripts/dump.ts
+
+      - name: Upload backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: owode-backup-${{ github.run_number }}
+          path: ../backups/*.json
+          retention-days: 90
