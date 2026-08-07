@@ -28,4 +28,15 @@ router.post('/webhook', async (req: Request, res: Response) => {
   }
 })
 
+// TEMPORARY: reports the server's outbound IP for Providus whitelisting. Remove after.
+router.get('/myip', async (_req, res) => {
+  try {
+    const r = await fetch('https://api.ipify.org?format=json')
+    const data = await r.json()
+    res.json({ outboundIp: data.ip })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 export default router
