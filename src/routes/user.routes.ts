@@ -3,6 +3,7 @@ import { registerUser, loginUser, setAppPin, verifyAppPin, setTransactionPin } f
 import { protect } from '../middleware/auth.middleware'
 import { prisma } from '../config/database'
 import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
 
 const router = Router()
 
