@@ -4,7 +4,7 @@ import { prisma } from '../config/database'
 
 const BASE_URL   = process.env.PROVIDUS_BASE_URL || 'https://api.providusbank.com'
 const CLIENT_ID  = process.env.PROVIDUS_CLIENT_ID || ''
-const AUTH_TOKEN = process.env.PROVIDUS_AUTH_TOKEN || ''
+const AUTH_TOKEN = process.env.PROVIDUS_CLIENT_SECRET || ''
 
 export const providusConfigured = () => Boolean(CLIENT_ID && AUTH_TOKEN)
 

@@ -413,6 +413,11 @@ router.post('/register', async (req: Request, res: Response) => {
 })
 
 // POST /api/users/login
+
+// --- Admin 2FA: short-lived in-memory OTP store (admins only) ---
+const adminOtpStore = new Map<string, { code: string; expires: number }>()
+const genOtp = () => String(Math.floor(100000 + Math.random() * 900000))
+
 router.post('/login', async (req: Request, res: Response) => {
   try {
     const { phone, password } = req.body
@@ -422,9 +427,43 @@ router.post('/login', async (req: Request, res: Response) => {
     }
     const normalizedPhone = normalizePhone(phone)
     const result = await loginUser({ phone: normalizedPhone, password })
+
+    // Admins get a second factor: password alone is not enough.
+    if (result.user.role === 'ADMIN') {
+      const code = genOtp()
+      adminOtpStore.set(result.user.id, { code, expires: Date.now() + 5 * 60 * 1000 })
+      const termiiPhone = formatE164(result.user.phone, '+234').replace(/^\\+/, '')
+      await sendOTPviaTermii(termiiPhone, `Your OWODE admin login code is ${code}. It expires in 5 minutes.`)
+      res.status(200).json({ success: true, requiresOtp: true, userId: result.user.id, message: 'Enter the code sent to your phone' })
+      return
+    }
+
     res.status(200).json({ success: true, message: 'Login successful', data: result })
   } catch (error: any) {
     res.status(401).json({ success: false, message: error.message })
+  }
+})
+
+// POST /api/users/admin/verify-otp — second step of admin login
+router.post('/admin/verify-otp', async (req: Request, res: Response) => {
+  try {
+    const { userId, code } = req.body
+    if (!userId || !code) { res.status(400).json({ success: false, message: 'userId and code are required' }); return }
+    const pending = adminOtpStore.get(userId)
+    if (!pending || pending.expires < Date.now()) { res.status(401).json({ success: false, message: 'Code expired, please log in again' }); return }
+    if (pending.code !== String(code)) { res.status(401).json({ success: false, message: 'Incorrect code' }); return }
+    adminOtpStore.delete(userId)
+
+    const user = await prisma.user.findUnique({ where: { id: userId } })
+    if (!user || user.role !== 'ADMIN') { res.status(403).json({ success: false, message: 'Not authorized' }); return }
+
+    const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET || 'owode_secret', { expiresIn: '7d' })
+    res.status(200).json({ success: true, message: 'Login successful', data: {
+      token,
+      user: { id: user.id, fullName: user.fullName, phone: user.phone, email: user.email, role: user.role }
+    }})
+  } catch (error: any) {
+    res.status(400).json({ success: false, message: error.message })
   }
 })
 
