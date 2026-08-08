@@ -24,7 +24,7 @@ export const createReservedAccount = async (userId: string) => {
   if (user.providusAccountNumber)
     return { accountNumber: user.providusAccountNumber, accountName: user.providusAccountName }
 
-  const res = await client().post('/PiP/api/v2/virtualaccount/create', {
+  const res = await client().post('PiPCreateReservedAccountNumber', {
     account_name: user.fullName, bvn: user.bvn || undefined
   })
   const data = res.data || {}
