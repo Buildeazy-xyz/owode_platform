@@ -16,15 +16,20 @@ router.post('/account', protect, async (req: any, res: Response) => {
 })
 
 router.post('/webhook', async (req: Request, res: Response) => {
+  const sessionId = req.body?.sessionId || ''
   try {
     const sig = req.header('X-Auth-Signature') || req.header('x-auth-signature')
-    if (!verifyWebhookSignature(sig)) { res.status(401).json({ requestSuccessful: false, responseMessage: 'Invalid signature' }); return }
-    const result = await handleSettlement(req.body)
-    res.status(200).json({ requestSuccessful: true, responseMessage: 'success', sessionId: req.body?.sessionId })
-    console.log('providus settlement:', result)
+    if (!verifyWebhookSignature(sig)) {
+      res.status(200).json({ requestSuccessful: true, sessionId, responseMessage: 'rejected transaction', responseCode: '02' })
+      return
+    }
+    const r = await handleSettlement(req.body)
+    res.status(200).json({ requestSuccessful: true, sessionId: r.sessionId || sessionId, responseMessage: r.message, responseCode: r.code })
+    console.log('providus settlement:', r)
   } catch (e: any) {
     console.error('providus webhook error:', e.message)
-    res.status(200).json({ requestSuccessful: false, responseMessage: e.message })
+    // System failure -> 03 tells Providus to retry later.
+    res.status(200).json({ requestSuccessful: true, sessionId, responseMessage: 'system failure', responseCode: '03' })
   }
 })
 

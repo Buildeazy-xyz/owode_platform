@@ -39,33 +39,39 @@ export const createReservedAccount = async (userId: string) => {
 
 export const verifyWebhookSignature = (headerSignature?: string) => {
   if (!headerSignature) return false
-  try { return crypto.timingSafeEqual(Buffer.from(headerSignature), Buffer.from(signature())) }
-  catch { return false }
+  // Providus asks that the signature comparison be case-insensitive.
+  return headerSignature.trim().toLowerCase() === signature().toLowerCase()
 }
 
 export const handleSettlement = async (payload: any) => {
-  const accountNumber = payload.accountNumber || payload.account_number
-  const amount        = Number(payload.settlementAmount || payload.amount || 0)
-  const sessionId     = payload.sessionId || payload.transactionId || payload.reference
-  if (!accountNumber || !amount || amount <= 0) throw new Error('Invalid settlement payload')
-  if (!sessionId) throw new Error('Missing settlement reference')
+  const accountNumber = payload.accountNumber
+  const amount        = Number(payload.settledAmount || 0)
+  const settlementId  = payload.settlementId
+  const sessionId     = payload.sessionId
 
-  const seen = await prisma.transaction.findFirst({ where: { reference: `PRV-${sessionId}` } })
-  if (seen) return { status: 'already_processed' }
+  if (!accountNumber || !settlementId) throw new Error('Invalid settlement payload')
+  if (!amount || amount <= 0) throw new Error('Invalid settlement amount')
+
+  // Providus: check duplicates on settlementId, not sessionId.
+  const seen = await prisma.transaction.findFirst({ where: { reference: `PRV-${settlementId}` } })
+  if (seen) return { code: '01', message: 'duplicate transaction', sessionId }
 
   const user = await prisma.user.findFirst({ where: { providusAccountNumber: accountNumber } })
-  if (!user) throw new Error(`No user for account ${accountNumber}`)
+  if (!user) return { code: '02', message: 'rejected transaction', sessionId }
 
   const wallet = await prisma.wallet.findUnique({ where: { userId: user.id } })
-  if (!wallet) throw new Error('Wallet not found')
+  if (!wallet) return { code: '02', message: 'rejected transaction', sessionId }
+
   const newBalance = wallet.balance + amount
 
   await prisma.$transaction([
     prisma.wallet.update({ where: { userId: user.id }, data: { balance: newBalance } }),
     prisma.transaction.create({ data: {
       walletId: wallet.id, type: 'CREDIT', amount, balance: newBalance,
-      description: 'Bank deposit via Providus', reference: `PRV-${sessionId}`, status: 'SUCCESS'
+      description: `Bank deposit${payload.sourceAccountName ? ' from ' + payload.sourceAccountName : ''}`,
+      reference: `PRV-${settlementId}`, status: 'SUCCESS'
     }})
   ])
-  return { status: 'credited', userId: user.id, amount, balance: newBalance }
+
+  return { code: '00', message: 'success', sessionId, userId: user.id, amount, balance: newBalance }
 }
