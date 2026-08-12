@@ -307,13 +307,18 @@ router.post('/notifications/send', protect, adminOnly, async (req: any, res: Res
       users = await prisma.user.findMany({ where: { role: 'CONTRIBUTOR' } })
     }
 
-    // For now log the notification — push notifications will be added with Expo push tokens
-    console.log(`📢 Admin notification sent to ${users.length} users: ${title}`)
+    const tokens = users.map((u: any) => u.pushToken).filter(Boolean)
+    const { sendPush } = await import('../utils/push')
+    const sent = await sendPush(tokens, title, body, { type: 'admin_broadcast' })
+
+    console.log(`Admin broadcast: ${sent} of ${users.length} users reachable`)
 
     res.status(200).json({
       success: true,
-      message: `Notification sent to ${users.length} users!`,
-      data: { sent: users.length, title, body }
+      message: sent > 0
+        ? `Notification sent to ${sent} users.`
+        : `No users could be reached — none have opened the app to register for notifications yet.`,
+      data: { matched: users.length, sent, title, body }
     })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
