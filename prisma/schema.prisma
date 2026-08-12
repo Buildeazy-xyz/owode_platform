@@ -72,6 +72,8 @@ model Transaction {
   createdAt   DateTime          @default(now())
 
   wallet      Wallet            @relation(fields: [walletId], references: [id])
+  latitude        Float?
+  longitude       Float?
 }
 
 enum TransactionType {

@@ -108,7 +108,8 @@ export const transferFunds = async (
   recipientPhone: string,
   amount: number,
   description: string,
-  transactionPin: string
+  transactionPin: string,
+  location?: { latitude: number; longitude: number } | null
 ) => {
   if (amount <= 0) throw new Error('Amount must be greater than 0')
   if (amount < 100) throw new Error('Minimum transfer amount is ₦100')
@@ -157,7 +158,9 @@ export const transferFunds = async (
         balance: senderNewBalance,
         description: `Transfer to ${recipient.fullName} — ${description}`,
         reference: `${reference}-OUT`,
-        status: 'SUCCESS'
+        status: 'SUCCESS',
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null
       }
     }),
     prisma.wallet.update({
