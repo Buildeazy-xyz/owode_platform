@@ -44,4 +44,19 @@ router.get('/myip', async (_req, res) => {
   }
 })
 
+// TEMPORARY: confirms the server can reach Providus. Remove after testing.
+router.get('/reachtest', async (_req, res) => {
+  const url = process.env.PROVIDUS_BASE_URL || 'http://154.113.16.142:8088/appdevapi/api/'
+  const started = Date.now()
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 15000)
+    const r = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(t)
+    res.json({ reachable: true, status: r.status, ms: Date.now() - started, url })
+  } catch (e: any) {
+    res.json({ reachable: false, error: e.message, ms: Date.now() - started, url })
+  }
+})
+
 export default router
