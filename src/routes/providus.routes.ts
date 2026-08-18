@@ -59,4 +59,21 @@ router.get('/reachtest', async (_req, res) => {
   }
 })
 
+// TEMPORARY: raw TCP check, equivalent to telnet. Remove after testing.
+router.get('/porttest', async (_req, res) => {
+  const net = await import('net')
+  const host = '154.113.16.142'
+  const port = 8088
+  const started = Date.now()
+  const result = await new Promise((resolve) => {
+    const sock = new net.Socket()
+    sock.setTimeout(15000)
+    sock.on('connect', () => { sock.destroy(); resolve({ open: true }) })
+    sock.on('timeout', () => { sock.destroy(); resolve({ open: false, reason: 'timeout' }) })
+    sock.on('error', (e: any) => { resolve({ open: false, reason: e.message }) })
+    sock.connect(port, host)
+  })
+  res.json({ ...(result as any), host, port, ms: Date.now() - started })
+})
+
 export default router
