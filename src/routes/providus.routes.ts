@@ -76,4 +76,24 @@ router.get('/porttest', async (_req, res) => {
   res.json({ ...(result as any), host, port, ms: Date.now() - started })
 })
 
+// TEMPORARY: tries several ports so we stop guessing. Remove after.
+router.get('/portscan', async (req, res) => {
+  const net = await import('net')
+  const host = String(req.query.host || '102.209.190.54')
+  const ports = [8088, 80, 443, 8080, 8443, 9080]
+  const out: any[] = []
+  for (const port of ports) {
+    const r = await new Promise((resolve) => {
+      const sock = new net.Socket()
+      sock.setTimeout(5000)
+      sock.on('connect', () => { sock.destroy(); resolve('open') })
+      sock.on('timeout', () => { sock.destroy(); resolve('timeout') })
+      sock.on('error', (e: any) => resolve(e.code || 'error'))
+      sock.connect(port, host)
+    })
+    out.push({ port, result: r })
+  }
+  res.json({ host, results: out })
+})
+
 export default router
