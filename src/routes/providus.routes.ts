@@ -62,7 +62,7 @@ router.get('/reachtest', async (_req, res) => {
 // TEMPORARY: raw TCP check, equivalent to telnet. Remove after testing.
 router.get('/porttest', async (_req, res) => {
   const net = await import('net')
-  const host = '154.113.16.142'
+  const host = process.env.PROVIDUS_HOST || '102.209.190.54'
   const port = 8088
   const started = Date.now()
   const result = await new Promise((resolve) => {
