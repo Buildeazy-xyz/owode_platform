@@ -96,4 +96,17 @@ router.get('/portscan', async (req, res) => {
   res.json({ host, results: out })
 })
 
+// TEMPORARY: creates a real Providus account for one user. Remove after.
+router.get('/testaccount/:phone', async (req, res) => {
+  try {
+    const { prisma } = await import('../config/database')
+    const user = await prisma.user.findUnique({ where: { phone: req.params.phone } })
+    if (!user) { res.json({ ok: false, message: 'no user with that phone' }); return }
+    const data = await createReservedAccount(user.id)
+    res.json({ ok: true, data })
+  } catch (e: any) {
+    res.json({ ok: false, error: e.message })
+  }
+})
+
 export default router
