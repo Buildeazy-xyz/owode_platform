@@ -53,7 +53,7 @@ router.get('/stats', protect, adminOnly, async (req: any, res: Response) => {
     const recentTransactions = await prisma.transaction.findMany({
       orderBy: { createdAt: 'desc' },
       take: 10,
-      include: { wallet: { include: { user: true } } }
+      include: { wallet: { include: { user: { select: { id: true, fullName: true, phone: true, email: true, role: true } } } } }
     })
 
     const sevenDaysAgo = new Date()
@@ -123,7 +123,7 @@ router.get('/transactions', protect, adminOnly, async (req: any, res: Response) 
     const transactions = await prisma.transaction.findMany({
       orderBy: { createdAt: 'desc' },
       take: 100,
-      include: { wallet: { include: { user: true } } }
+      include: { wallet: { include: { user: { select: { id: true, fullName: true, phone: true, email: true, role: true } } } } }
     })
     res.status(200).json({ success: true, data: transactions })
   } catch (error: any) {
@@ -186,7 +186,10 @@ router.get('/agents', protect, adminOnly, async (req: any, res: Response) => {
   try {
     const agents = await prisma.user.findMany({
       where: { role: 'AGENT' },
-      include: { wallet: true }
+      select: {
+        id: true, fullName: true, phone: true, email: true, role: true,
+        isVerified: true, isActive: true, createdAt: true, wallet: true
+      }
     })
     res.status(200).json({ success: true, data: agents })
   } catch (error: any) {

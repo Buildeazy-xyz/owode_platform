@@ -4,6 +4,7 @@ import { protect } from '../middleware/auth.middleware'
 import { prisma } from '../config/database'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import { tooManyAttempts } from '../utils/pinGuard'
 
 const router = Router()
 
@@ -349,6 +350,11 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
       return
     }
     const normalizedPhone = normalizePhone(phone)
+    if (tooManyAttempts(`otp:${normalizedPhone}`, 5, 10 * 60 * 1000)) {
+      delete otpStore[normalizedPhone]
+      res.status(429).json({ success: false, message: 'Too many wrong codes. Please request a new one.' })
+      return
+    }
     const stored = otpStore[normalizedPhone]
     if (!stored) {
       res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' })
@@ -427,13 +433,17 @@ router.post('/login', async (req: Request, res: Response) => {
       return
     }
     const normalizedPhone = normalizePhone(phone)
+    if (tooManyAttempts(`login:${normalizedPhone}`, 10, 15 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Too many login attempts. Please wait 15 minutes and try again.' })
+      return
+    }
     const result = await loginUser({ phone: normalizedPhone, password })
 
     // Admins get a second factor: password alone is not enough.
     if (result.user.role === 'ADMIN') {
       const code = genOtp()
       adminOtpStore.set(result.user.id, { code, expires: Date.now() + 5 * 60 * 1000 })
-      const termiiPhone = formatE164(result.user.phone, '+234').replace(/^\\+/, '')
+      const termiiPhone = formatE164(result.user.phone, '+234').replace(/^\+/, '')
       await sendOTPviaTermii(termiiPhone, `Your OWODE admin login code is ${code}. It expires in 5 minutes.`)
       res.status(200).json({ success: true, requiresOtp: true, userId: result.user.id, message: 'Enter the code sent to your phone' })
       return
@@ -450,6 +460,11 @@ router.post('/admin/verify-otp', async (req: Request, res: Response) => {
   try {
     const { userId, code } = req.body
     if (!userId || !code) { res.status(400).json({ success: false, message: 'userId and code are required' }); return }
+    if (tooManyAttempts(`admin-otp:${userId}`, 5, 10 * 60 * 1000)) {
+      adminOtpStore.delete(userId)
+      res.status(429).json({ success: false, message: 'Too many wrong codes. Please log in again.' })
+      return
+    }
     const pending = adminOtpStore.get(userId)
     if (!pending || pending.expires < Date.now()) { res.status(401).json({ success: false, message: 'Code expired, please log in again' }); return }
     if (pending.code !== String(code)) { res.status(401).json({ success: false, message: 'Incorrect code' }); return }
@@ -566,6 +581,11 @@ router.post('/transaction-pin/reset', protect, async (req: any, res: Response) =
     const pinUser = await prisma.user.findUnique({ where: { id: req.user.userId } })
     if (!pinUser) { res.status(404).json({ success: false, message: 'User not found' }); return }
     const np = normalizePhone(pinUser.phone)
+    if (tooManyAttempts(`pin-reset:${req.user.userId}`, 5, 10 * 60 * 1000)) {
+      delete otpStore[np]
+      res.status(429).json({ success: false, message: 'Too many wrong codes. Please request a new one.' })
+      return
+    }
     const stored = otpStore[np]
     if (!stored) { res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' }); return }
     if (Date.now() > stored.expires) { delete otpStore[np]; res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' }); return }

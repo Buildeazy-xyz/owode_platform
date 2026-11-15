@@ -1,5 +1,6 @@
 import { prisma } from '../config/database'
-import bcrypt from 'bcryptjs'
+import { debitInTx, creditInTx } from '../utils/money'
+import { verifyTransactionPinOrThrow } from '../utils/pinGuard'
 import { notify } from './notification.service'
 // Create a new Ajo group
 export const createAjoGroup = async (data: {
@@ -159,63 +160,57 @@ export const makeContribution = async (data: {
   // Verify transaction PIN before any money moves
   const contribUser = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!contribUser) throw new Error('User not found')
-  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
-    if (!contribUser.transactionPin) throw new Error('Please set a transaction PIN first')
-    const pinOk = await bcrypt.compare(data.transactionPin, contribUser.transactionPin)
-    if (!pinOk) throw new Error('Invalid transaction PIN')
-  }
-
-  const newBalance = wallet.balance - group.amount
+  // Biometrics only unlock the real PIN on-device; the server always checks it.
+  await verifyTransactionPinOrThrow(contribUser, data.transactionPin)
 
   // ATOMIC: contributor debit, cycle detection and payout all commit together.
-  // Row locks also serialise concurrent contributions, so two members paying at
-  // the same instant cannot both trigger the payout.
+  // The group row is locked first, so contributions to the same group run one
+  // at a time: the last payer always sees everyone else as paid (no stuck
+  // cycle) and only one of them can ever trigger the payout.
   const outcome = await prisma.$transaction(async (tx) => {
-    await tx.wallet.update({
-      where: { userId: data.userId },
-      data: { balance: newBalance, totalPayout: { increment: group.amount } }
+    await tx.$queryRaw`SELECT id FROM "AjoGroup" WHERE id = ${data.groupId} FOR UPDATE`
+
+    const g = await tx.ajoGroup.findUnique({ where: { id: data.groupId } })
+    if (!g || !g.isActive) throw new Error('Group is no longer active')
+
+    // Claim this cycle's payment. A double tap matches nothing the second time.
+    const claim = await tx.ajoMember.updateMany({
+      where: { id: member.id, hasPaid: false },
+      data: { hasPaid: true }
     })
+    if (claim.count !== 1) throw new Error('You have already paid for this cycle')
+
+    const after = await debitInTx(tx, data.userId, g.amount, { countAsPayout: true })
     await tx.transaction.create({
       data: {
-        walletId: wallet.id,
+        walletId: after.id,
         type: 'DEBIT',
-        amount: group.amount,
-        balance: newBalance,
-        description: `Ajo contribution — ${group.name}`,
+        amount: g.amount,
+        balance: after.balance,
+        description: `Ajo contribution — ${g.name}`,
         reference: `AJO-${Date.now()}-${data.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
     })
-    await tx.ajoMember.update({
-      where: { id: member.id },
-      data: { hasPaid: true }
-    })
 
     const members = await tx.ajoMember.findMany({ where: { groupId: data.groupId } })
     const everyonePaid = members.filter((m: any) => !m.isAvatar).every((m: any) => m.hasPaid)
-    if (!everyonePaid) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+    if (!everyonePaid) return { members, paid: false, recipient: null as any, totalPayout: 0, cycle: g.currentCycle }
 
-    const nextPosition = (group.currentCycle % group.totalMembers) + 1
+    const nextPosition = (g.currentCycle % g.totalMembers) + 1
     const recipient = members.find((m: any) => m.position === nextPosition)
-    if (!recipient) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+    if (!recipient) return { members, paid: false, recipient: null as any, totalPayout: 0, cycle: g.currentCycle }
 
-    const recipientWallet = await tx.wallet.findUnique({ where: { userId: recipient.userId } })
-    if (!recipientWallet) return { members, paid: false, recipient: null as any, totalPayout: 0 }
+    const totalPayout = g.amount * g.totalMembers
+    const paidWallet = await creditInTx(tx, recipient.userId, totalPayout, { countAsSaved: true })
 
-    const totalPayout = group.amount * group.totalMembers
-    const newRecipientBalance = recipientWallet.balance + totalPayout
-
-    await tx.wallet.update({
-      where: { userId: recipient.userId },
-      data: { balance: newRecipientBalance, totalSaved: { increment: totalPayout } }
-    })
     await tx.transaction.create({
       data: {
-        walletId: recipientWallet.id,
+        walletId: paidWallet.id,
         type: 'CREDIT',
         amount: totalPayout,
-        balance: newRecipientBalance,
-        description: `Ajo payout — ${group.name} cycle ${group.currentCycle + 1}`,
+        balance: paidWallet.balance,
+        description: `Ajo payout — ${g.name} cycle ${g.currentCycle + 1}`,
         reference: `PAYOUT-${Date.now()}-${recipient.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
@@ -229,7 +224,7 @@ export const makeContribution = async (data: {
       data: { hasPaid: false }
     })
 
-    return { members, paid: true, recipient, totalPayout }
+    return { members, paid: true, recipient, totalPayout, cycle: g.currentCycle }
   })
 
   const updatedMembers = outcome.members
@@ -256,7 +251,7 @@ export const makeContribution = async (data: {
       payoutSent: true,
       payoutTo: outcome.recipient.userId,
       payoutAmount: outcome.totalPayout,
-      nextCycle: group.currentCycle + 1
+      nextCycle: outcome.cycle + 1
     }
   }
 

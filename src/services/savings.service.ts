@@ -1,7 +1,8 @@
 import { prisma } from '../config/database'
 import { creditPlatform } from './platform.service'
 import { sendPush } from '../utils/push'
-import bcrypt from 'bcryptjs'
+import { toAmount, debitInTx, creditInTx } from '../utils/money'
+import { verifyTransactionPinOrThrow } from '../utils/pinGuard'
 import { v4 as uuidv4 } from 'uuid'
 
 // Create a new savings goal
@@ -33,14 +34,7 @@ export const createSavingsGoal = async (data: {
   // the wallet without a goal existing to hold it.
   const goal = await prisma.$transaction(async (tx) => {
     if (currentAmount > 0) {
-      const fresh = await tx.wallet.findUnique({ where: { userId: data.userId } })
-      if (!fresh) throw new Error('Wallet not found')
-      if (fresh.balance < currentAmount) throw new Error('Insufficient balance for initial deposit')
-
-      await tx.wallet.update({
-        where: { userId: data.userId },
-        data: { balance: { decrement: currentAmount } }
-      })
+      const after = await debitInTx(tx, data.userId, currentAmount)
 
       await tx.transaction.create({
         data: {
@@ -48,7 +42,7 @@ export const createSavingsGoal = async (data: {
           walletId: wallet.id,
           type: 'DEBIT',
           amount: currentAmount,
-          balance: fresh.balance - currentAmount,
+          balance: after.balance,
           description: `Initial deposit — ${data.title}`,
           reference: `SAV-INIT-${Date.now()}`,
           status: 'SUCCESS'
@@ -97,7 +91,7 @@ export const depositToGoal = async (data: {
   amount: number
   transactionPin: string
 }) => {
-  if (data.amount <= 0) throw new Error('Amount must be greater than 0')
+  const amount = toAmount(data.amount)
 
   const goal = await prisma.savingsGoal.findUnique({ where: { id: data.goalId } })
   if (!goal) throw new Error('Savings goal not found')
@@ -107,64 +101,70 @@ export const depositToGoal = async (data: {
   const wallet = await prisma.wallet.findUnique({ where: { userId: data.userId } })
   if (!wallet) throw new Error('Wallet not found')
   if (wallet.isLocked) throw new Error('Your wallet is locked')
-  if (wallet.balance < data.amount) throw new Error('Insufficient balance')
+  if (wallet.balance < amount) throw new Error('Insufficient balance')
 
   const depUser = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!depUser) throw new Error('User not found')
-  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
-    if (!depUser.transactionPin) throw new Error('Please set a transaction PIN first')
-    const pinOk = await bcrypt.compare(data.transactionPin, depUser.transactionPin)
-    if (!pinOk) throw new Error('Incorrect transaction PIN')
-  }
+  // Biometrics only unlock the real PIN on-device; the server always checks it.
+  await verifyTransactionPinOrThrow(depUser, data.transactionPin)
 
-  const newCurrentAmount = goal.currentAmount + data.amount
-  const isCompleted = newCurrentAmount >= goal.goalAmount
+  // ATOMIC: the wallet debit, the goal increment and both ledger rows commit
+  // together, and the goal total uses an increment so two deposits at the
+  // same moment are both counted.
+  const updatedGoal = await prisma.$transaction(async (tx) => {
+    const g = await tx.savingsGoal.updateMany({
+      where: { id: data.goalId, userId: data.userId, status: 'ACTIVE' },
+      data: { currentAmount: { increment: amount } }
+    })
+    if (g.count !== 1) throw new Error('This savings goal is no longer active')
 
-  await prisma.$transaction([
-    prisma.wallet.update({
-      where: { userId: data.userId },
-      data: { balance: { decrement: data.amount } }
-    }),
-    prisma.transaction.create({
+    const after = await debitInTx(tx, data.userId, amount)
+    await tx.transaction.create({
       data: {
         id: uuidv4(),
         walletId: wallet.id,
         type: 'DEBIT',
-        amount: data.amount,
-        balance: wallet.balance - data.amount,
+        amount,
+        balance: after.balance,
         description: `Savings deposit — ${goal.title}`,
-        reference: `SAV-DEP-${Date.now()}`,
+        reference: `SAV-DEP-${Date.now()}-${uuidv4().slice(0, 6)}`,
         status: 'SUCCESS'
       }
-    }),
-    prisma.savingsGoal.update({
-      where: { id: data.goalId },
-      data: {
-        currentAmount: newCurrentAmount,
-        isCompleted,
-        status: isCompleted ? 'COMPLETED' : 'ACTIVE'
-      }
-    }),
-    prisma.savingsContribution.create({
+    })
+    await tx.savingsContribution.create({
       data: {
         id: uuidv4(),
         goalId: data.goalId,
-        amount: data.amount,
+        amount,
         type: 'MANUAL',
         description: `Manual deposit`
       }
     })
-  ])
+
+    const fresh = await tx.savingsGoal.findUnique({ where: { id: data.goalId } })
+    if (!fresh) throw new Error('Savings goal not found')
+    if (fresh.currentAmount >= fresh.goalAmount && !fresh.isCompleted) {
+      return tx.savingsGoal.update({
+        where: { id: data.goalId },
+        data: { isCompleted: true, status: 'COMPLETED' }
+      })
+    }
+    return fresh
+  })
+
+  const newCurrentAmount = updatedGoal.currentAmount
+  const isCompleted = updatedGoal.currentAmount >= updatedGoal.goalAmount
+  const progress = Math.round((newCurrentAmount / updatedGoal.goalAmount) * 100)
 
   return {
     success: true,
     newAmount: newCurrentAmount,
-    goalAmount: goal.goalAmount,
-    progress: Math.round((newCurrentAmount / goal.goalAmount) * 100),
+    goalAmount: updatedGoal.goalAmount,
+    progress,
     isCompleted,
     message: isCompleted
       ? '🎉 Congratulations! You reached your savings goal!'
-      : `✅ Deposit successful! ${Math.round((newCurrentAmount / goal.goalAmount) * 100)}% of goal reached`
+      : `✅ Deposit successful! ${progress}% of goal reached`
   }
 }
 
@@ -185,52 +185,52 @@ export const withdrawFromGoal = async (data: {
 
   const wdUser = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!wdUser) throw new Error('User not found')
-  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
-    if (!wdUser.transactionPin) throw new Error('Please set a transaction PIN first')
-    const wpinOk = await bcrypt.compare(data.transactionPin, wdUser.transactionPin)
-    if (!wpinOk) throw new Error('Incorrect transaction PIN')
-  }
+  // Biometrics only unlock the real PIN on-device; the server always checks it.
+  await verifyTransactionPinOrThrow(wdUser, data.transactionPin)
 
-  const now = new Date()
-  const targetDate = new Date(goal.targetDate)
-  const isEarly = now < targetDate
+  const withdrawRef = `SAV-WITH-${Date.now()}-${uuidv4().slice(0, 6)}`
 
-  let withdrawAmount = goal.currentAmount
-  let penaltyAmount = 0
+  const result = await prisma.$transaction(async (tx) => {
+    // Read the goal inside the transaction, then CLAIM it with a conditional
+    // update. If two withdrawals race, only one claim matches; the other
+    // gets "Already withdrawn" and no second payout is made.
+    const fresh = await tx.savingsGoal.findUnique({ where: { id: data.goalId } })
+    if (!fresh || fresh.userId !== data.userId) throw new Error('Savings goal not found')
+    if (fresh.status === 'WITHDRAWN' || fresh.currentAmount <= 0) throw new Error('Already withdrawn')
 
-  // Apply penalty for early withdrawal
-  if (isEarly && !goal.isCompleted) {
-    penaltyAmount = goal.currentAmount * (goal.penaltyPercent / 100)
-    withdrawAmount = goal.currentAmount - penaltyAmount
-  }
-
-  const withdrawRef = `SAV-WITH-${Date.now()}`
-
-  await prisma.$transaction(async (tx) => {
-    const freshWallet = await tx.wallet.findUnique({ where: { userId: data.userId } })
-    if (!freshWallet) throw new Error('Wallet not found')
-
-    await tx.wallet.update({
-      where: { userId: data.userId },
-      data: { balance: { increment: withdrawAmount } }
+    const claim = await tx.savingsGoal.updateMany({
+      where: {
+        id: data.goalId,
+        userId: data.userId,
+        status: { not: 'WITHDRAWN' },
+        currentAmount: fresh.currentAmount
+      },
+      data: { status: 'WITHDRAWN', isActive: false, currentAmount: 0 }
     })
+    if (claim.count !== 1) throw new Error('Already withdrawn')
+
+    const now = new Date()
+    const isEarly = now < new Date(fresh.targetDate)
+    let withdrawAmount = fresh.currentAmount
+    let penaltyAmount = 0
+    if (isEarly && !fresh.isCompleted) {
+      penaltyAmount = Math.round(fresh.currentAmount * (fresh.penaltyPercent / 100) * 100) / 100
+      withdrawAmount = fresh.currentAmount - penaltyAmount
+    }
+
+    const after = await creditInTx(tx, data.userId, withdrawAmount)
 
     await tx.transaction.create({
       data: {
         id: uuidv4(),
-        walletId: freshWallet.id,
+        walletId: after.id,
         type: 'CREDIT',
         amount: withdrawAmount,
-        balance: freshWallet.balance + withdrawAmount,
-        description: `Savings withdrawal — ${goal.title}${isEarly ? ' (early withdrawal)' : ''}`,
+        balance: after.balance,
+        description: `Savings withdrawal — ${fresh.title}${isEarly ? ' (early withdrawal)' : ''}`,
         reference: withdrawRef,
         status: 'SUCCESS'
       }
-    })
-
-    await tx.savingsGoal.update({
-      where: { id: data.goalId },
-      data: { status: 'WITHDRAWN', isActive: false, currentAmount: 0 }
     })
 
     await tx.savingsContribution.create({
@@ -239,7 +239,7 @@ export const withdrawFromGoal = async (data: {
         goalId: data.goalId,
         amount: withdrawAmount,
         type: 'WITHDRAWAL',
-        description: isEarly ? `Early withdrawal — ${goal.penaltyPercent}% penalty applied` : 'Matured withdrawal'
+        description: isEarly ? `Early withdrawal — ${fresh.penaltyPercent}% penalty applied` : 'Matured withdrawal'
       }
     })
 
@@ -252,17 +252,20 @@ export const withdrawFromGoal = async (data: {
           goalId: data.goalId,
           amount: penaltyAmount,
           type: 'PENALTY',
-          description: `Early withdrawal penalty (${goal.penaltyPercent}%)`
+          description: `Early withdrawal penalty (${fresh.penaltyPercent}%)`
         }
       })
       await creditPlatform(tx, {
         amount: penaltyAmount,
-        description: `Early withdrawal penalty — ${goal.title}`,
-        reference: `FEE-PEN-${Date.now()}`
+        description: `Early withdrawal penalty — ${fresh.title}`,
+        reference: `FEE-PEN-${Date.now()}-${uuidv4().slice(0, 6)}`
       })
     }
+
+    return { withdrawAmount, penaltyAmount, isEarly }
   })
 
+  const { withdrawAmount, penaltyAmount, isEarly } = result
   return {
     success: true,
     withdrawAmount,
@@ -392,12 +395,14 @@ export const runAutoDebits = async () => {
 
         const wallet = await tx.wallet.findUnique({ where: { userId: fresh.userId } })
         if (!wallet) return 'skip'
-        if (wallet.balance < amount) return 'short'
 
-        await tx.wallet.update({
-          where: { userId: fresh.userId },
+        // Conditional debit: only succeeds if the money is there right now.
+        const debit = await tx.wallet.updateMany({
+          where: { userId: fresh.userId, isLocked: false, balance: { gte: amount } },
           data: { balance: { decrement: amount } }
         })
+        if (debit.count !== 1) return 'short'
+        const after = await tx.wallet.findUnique({ where: { userId: fresh.userId } })
 
         await tx.transaction.create({
           data: {
@@ -405,7 +410,7 @@ export const runAutoDebits = async () => {
             walletId: wallet.id,
             type: 'DEBIT',
             amount,
-            balance: wallet.balance - amount,
+            balance: after ? after.balance : wallet.balance - amount,
             description: `Auto-save \u2014 ${fresh.title}`,
             reference: `SAV-AUTO-${Date.now()}-${fresh.id.slice(0, 8)}`,
             status: 'SUCCESS'

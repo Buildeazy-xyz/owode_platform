@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express'
-import { getWalletBalance, creditWallet, debitWallet, transferFunds, getWalletTransactions} from '../services/wallet.service'
+import { getWalletBalance, transferFunds, getWalletTransactions } from '../services/wallet.service'
 import { protect } from '../middleware/auth.middleware'
 
 const router = Router()
@@ -28,35 +28,9 @@ router.get('/balance', protect, async (req: any, res: Response) => {
   }
 })
 
-// POST /api/wallet/credit
-router.post('/credit', protect, async (req: any, res: Response) => {
-  try {
-    const { amount, description } = req.body
-    if (!amount || !description) {
-      res.status(400).json({ success: false, message: 'amount and description are required' })
-      return
-    }
-    const result = await creditWallet(req.user.userId, amount, description)
-    res.status(200).json({ success: true, message: 'Wallet credited', data: result })
-  } catch (error: any) {
-    res.status(400).json({ success: false, message: error.message })
-  }
-})
-
-// POST /api/wallet/debit
-router.post('/debit', protect, async (req: any, res: Response) => {
-  try {
-    const { amount, description } = req.body
-    if (!amount || !description) {
-      res.status(400).json({ success: false, message: 'amount and description are required' })
-      return
-    }
-    const result = await debitWallet(req.user.userId, amount, description)
-    res.status(200).json({ success: true, message: 'Wallet debited', data: result })
-  } catch (error: any) {
-    res.status(400).json({ success: false, message: error.message })
-  }
-})
+// /api/wallet/credit and /api/wallet/debit were removed: any logged-in user
+// could add money to their own wallet. Money only enters a wallet through a
+// bank settlement, an agent collection, an Ajo payout or a savings withdrawal.
 
 // POST /api/wallet/transfer
 router.post('/transfer', protect, async (req: any, res: Response) => {
@@ -67,7 +41,7 @@ router.post('/transfer', protect, async (req: any, res: Response) => {
       return
     }
     const result = await transferFunds(req.user.userId, recipientPhone, amount, description, transactionPin, location)
-    res.status(200).json({ success: true, message: `₦${amount.toLocaleString()} sent successfully!`, data: result })
+    res.status(200).json({ success: true, message: `₦${result.amount.toLocaleString()} sent successfully!`, data: result })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
   }

@@ -61,7 +61,7 @@ export const runRecoveryChecks = async () => {
 export const getAllDefaults = async () => {
   return await prisma.defaultRecord.findMany({
     include: {
-      user: true,
+      user: { select: { id: true, fullName: true, phone: true, email: true, trustScore: true } },
       group: true
     },
     orderBy: { createdAt: 'desc' }

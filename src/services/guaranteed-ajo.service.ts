@@ -1,10 +1,12 @@
 import { prisma } from '../config/database'
 import { updateTrustScore, isEligibleForGuaranteedAjo } from './trust.service'
-import { collectGuaranteeFee, avatarCoverDefault } from './guarantee.service'
+import { avatarCoverDefault } from './guarantee.service'
 import { notify } from './notification.service'
-import bcrypt from 'bcryptjs'
+import { debitInTx, creditInTx } from '../utils/money'
+import { verifyTransactionPinOrThrow } from '../utils/pinGuard'
 
 const AVATAR_ID = 'owode-avatar-000000000000000000000000'
+const POOL_ID = 'guarantee-pool-000000000000000000000'
 
 // Create a guaranteed Ajo group
 export const createGuaranteedGroup = async (data: {
@@ -66,7 +68,7 @@ if (!user) throw new Error('User not found')
 if (user.trustScore < 35) throw new Error('Trust score too low to join Guaranteed Ajo')
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
-    include: { members: { include: { user: true } } }
+    include: { members: { include: { user: { select: { id: true, fullName: true, phone: true, trustScore: true, isVerified: true } } } } }
   })
   if (group && (group as any).isUserCreated && (group as any).approvalStatus !== 'APPROVED') {
     throw new Error('This group has not been approved yet. Contributions cannot start.')
@@ -109,25 +111,25 @@ if (user.trustScore < 35) throw new Error('Trust score too low to join Guarantee
 }
 
 // Make contribution to guaranteed Ajo
+//
+// Everything that moves money happens in ONE transaction, with the group row
+// locked first. Before this, the debit and the payout ran separately, so two
+// members paying at the same instant could both see "everyone has paid" and
+// the recipient was paid twice.
 export const makeGuaranteedContribution = async (data: {
   groupId: string
   userId: string
   transactionPin: string
 }) => {
-  // Verify transaction PIN
   const user = await prisma.user.findUnique({ where: { id: data.userId } })
   if (!user) throw new Error('User not found')
+  // Biometrics only unlock the real PIN on-device; the server always checks it.
+  await verifyTransactionPinOrThrow(user, data.transactionPin)
 
-  if (true) { // biometrics must unlock a real PIN on-device; server never trusts a magic string
-    if (!user.transactionPin) throw new Error('Please set a transaction PIN first')
-    const isPinValid = await bcrypt.compare(data.transactionPin, user.transactionPin)
-    if (!isPinValid) throw new Error('Invalid transaction PIN')
-  }
   const group = await prisma.ajoGroup.findUnique({
     where: { id: data.groupId },
-    include: { members: { include: { user: true } } }
+    include: { members: true }
   })
-
   if (!group) throw new Error('Group not found')
   if (!group.isActive) throw new Error('Group is paused or inactive')
 
@@ -144,170 +146,164 @@ export const makeGuaranteedContribution = async (data: {
     throw new Error(`Insufficient balance. You need ₦${totalDeduction.toLocaleString()} (₦${group.amount.toLocaleString()} contribution + ₦${group.guaranteeFee.toLocaleString()} guarantee fee)`)
   }
 
-  const newBalance = wallet.balance - totalDeduction
+  const outcome = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "AjoGroup" WHERE id = ${data.groupId} FOR UPDATE`
 
-  // Debit wallet
-  await prisma.$transaction([
-    prisma.wallet.update({
-      where: { userId: data.userId },
+    const g = await tx.ajoGroup.findUnique({ where: { id: data.groupId } })
+    if (!g || !g.isActive) throw new Error('Group is paused or inactive')
+
+    // Claim this cycle's payment. A double tap matches nothing the second time.
+    const claim = await tx.ajoMember.updateMany({
+      where: { id: member.id, hasPaid: false },
+      data: { hasPaid: true }
+    })
+    if (claim.count !== 1) throw new Error('You have already paid for this cycle')
+
+    const deduction = g.amount + g.guaranteeFee
+    const after = await debitInTx(tx, data.userId, deduction, { countAsPayout: true })
+    await tx.transaction.create({
       data: {
-        balance: newBalance,
-        totalPayout: { increment: totalDeduction }
-      }
-    }),
-    prisma.transaction.create({
-      data: {
-        walletId: wallet.id,
+        walletId: after.id,
         type: 'DEBIT',
-        amount: totalDeduction,
-        balance: newBalance,
-        description: `Guaranteed Ajo contribution — ${group.name} (includes ₦${group.guaranteeFee} guarantee fee)`,
+        amount: deduction,
+        balance: after.balance,
+        description: `Guaranteed Ajo contribution — ${g.name} (includes ₦${g.guaranteeFee} guarantee fee)`,
         reference: `GAJO-${Date.now()}-${data.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
-    }),
-    prisma.ajoMember.update({
-      where: { id: member.id },
-      data: { hasPaid: true }
     })
-  ])
 
-  // Collect guarantee fee to pool
-  await collectGuaranteeFee(wallet.id, group.guaranteeFee, data.groupId)
+    // Guarantee fee into the pool, in the same transaction as the debit.
+    if (g.guaranteeFee > 0) {
+      await tx.guaranteePool.update({
+        where: { id: POOL_ID },
+        data: { totalBalance: { increment: g.guaranteeFee }, totalCollected: { increment: g.guaranteeFee } }
+      })
+      await tx.ajoGroup.update({
+        where: { id: data.groupId },
+        data: { guaranteePoolBalance: { increment: g.guaranteeFee } }
+      })
+    }
 
-  // Send notification
-  await notify.contributionMade({
-    phone: user.phone,
-    email: user.email,
-    amount: totalDeduction,
-    groupName: group.name,
-    fullName: user.fullName
-  })
+    const members = await tx.ajoMember.findMany({ where: { groupId: data.groupId } })
+    const realMembers = members.filter((m: any) => !m.isAvatar)
+    const allPaid = realMembers.every((m: any) => m.hasPaid)
 
-  // Check if all real members have paid
-  const updatedMembers = await prisma.ajoMember.findMany({
-    where: { groupId: data.groupId }
-  })
-
-  const realMembers = updatedMembers.filter((m: any) => !m.isAvatar)
-  const allPaid = realMembers.every((m: any) => m.hasPaid)
-
-  if (allPaid) {
-    return await processGuaranteedPayout(data.groupId, group, updatedMembers)
-  }
-
-  const paidCount = realMembers.filter((m: any) => m.hasPaid).length
-  const remainingCount = realMembers.filter((m: any) => !m.hasPaid).length
-
-  return {
-    contributed: true,
-    allPaid: false,
-    payoutSent: false,
-    amount: group.amount,
-    guaranteeFee: group.guaranteeFee,
-    paidCount,
-    remainingCount,
-    newBalance
-  }
-}
-
-// Process payout when all members have paid
-const processGuaranteedPayout = async (
-  groupId: string,
-  group: any,
-  members: any[]
-) => {
-  const nextPosition = (group.currentCycle % (group.totalMembers - 1)) + 1
-  const recipient = members.find((m: any) => m.position === nextPosition && !m.isAvatar)
-
-  if (!recipient) throw new Error('No recipient found for this cycle')
-
-  const totalPayout = group.amount * (group.totalMembers - 1) // Exclude avatar from payout calc
-
-  const recipientWallet = await prisma.wallet.findUnique({
-    where: { userId: recipient.userId }
-  })
-
-  if (!recipientWallet) throw new Error('Recipient wallet not found')
-
-  const newRecipientBalance = recipientWallet.balance + totalPayout
-
-  await prisma.$transaction([
-    // Credit recipient
-    prisma.wallet.update({
-      where: { userId: recipient.userId },
-      data: {
-        balance: newRecipientBalance,
-        totalSaved: { increment: totalPayout }
+    if (!allPaid) {
+      return {
+        payout: null as null | { recipientUserId: string; totalPayout: number; cycle: number },
+        members,
+        newBalance: after.balance,
+        groupName: g.name,
+        amount: g.amount,
+        guaranteeFee: g.guaranteeFee
       }
-    }),
-    // Create payout transaction
-    prisma.transaction.create({
+    }
+
+    // Everyone has paid: pay this cycle's recipient, once.
+    const nextPosition = (g.currentCycle % (g.totalMembers - 1)) + 1
+    const recipient = members.find((m: any) => m.position === nextPosition && !m.isAvatar)
+    if (!recipient) throw new Error('No recipient found for this cycle')
+
+    const totalPayout = g.amount * (g.totalMembers - 1) // Exclude avatar from payout calc
+    const paid = await creditInTx(tx, recipient.userId, totalPayout, { countAsSaved: true })
+
+    await tx.transaction.create({
       data: {
-        walletId: recipientWallet.id,
+        walletId: paid.id,
         type: 'CREDIT',
         amount: totalPayout,
-        balance: newRecipientBalance,
-        description: `Guaranteed Ajo payout — ${group.name} Cycle ${group.currentCycle + 1}`,
+        balance: paid.balance,
+        description: `Guaranteed Ajo payout — ${g.name} Cycle ${g.currentCycle + 1}`,
         reference: `GPAYOUT-${Date.now()}-${recipient.userId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
-    }),
-    // Record cycle
-    prisma.ajoCycle.create({
+    })
+    await tx.ajoCycle.create({
       data: {
-        groupId,
-        cycleNumber: group.currentCycle + 1,
+        groupId: data.groupId,
+        cycleNumber: g.currentCycle + 1,
         recipientId: recipient.userId,
         totalAmount: totalPayout,
         avatarCovered: false,
         status: 'COMPLETED',
         completedAt: new Date()
       }
-    }),
-    // Advance cycle
-    prisma.ajoGroup.update({
-      where: { id: groupId },
+    })
+    await tx.ajoGroup.update({
+      where: { id: data.groupId },
       data: { currentCycle: { increment: 1 } }
-    }),
-    // Mark recipient as having received payout
-    prisma.ajoMember.update({
+    })
+    await tx.ajoMember.update({
       where: { id: recipient.id },
       data: { payoutReceived: true }
     })
-  ])
+    await tx.ajoMember.updateMany({
+      where: { groupId: data.groupId, isAvatar: false },
+      data: { hasPaid: false }
+    })
 
-  // Reset all member payments for next cycle
-  await prisma.ajoMember.updateMany({
-    where: { groupId, isAvatar: false },
-    data: { hasPaid: false }
+    return {
+      payout: { recipientUserId: recipient.userId, totalPayout, cycle: g.currentCycle },
+      members,
+      newBalance: after.balance,
+      groupName: g.name,
+      amount: g.amount,
+      guaranteeFee: g.guaranteeFee
+    }
   })
 
-  // Get recipient info for notification
-  const recipientUser = await prisma.user.findUnique({ where: { id: recipient.userId } })
-  if (recipientUser) {
-    await notify.ajoPayout({
-      phone: recipientUser.phone,
-      email: recipientUser.email,
-      amount: totalPayout,
-      groupName: group.name,
-      fullName: recipientUser.fullName
+  // Notifications and trust scores stay outside the transaction on purpose:
+  // a failed SMS must never roll back money that has already moved.
+  try {
+    await notify.contributionMade({
+      phone: user.phone,
+      email: user.email,
+      amount: outcome.amount + outcome.guaranteeFee,
+      groupName: outcome.groupName,
+      fullName: user.fullName
     })
+  } catch (e) {}
+
+  if (outcome.payout) {
+    const recipientUser = await prisma.user.findUnique({ where: { id: outcome.payout.recipientUserId } })
+    if (recipientUser) {
+      try {
+        await notify.ajoPayout({
+          phone: recipientUser.phone,
+          email: recipientUser.email,
+          amount: outcome.payout.totalPayout,
+          groupName: outcome.groupName,
+          fullName: recipientUser.fullName
+        })
+      } catch (e) {}
+    }
+
+    const paidMembers = outcome.members.filter((m: any) => !m.isAvatar && m.hasPaid)
+    for (const m of paidMembers) {
+      try { await updateTrustScore(m.userId) } catch (e) {}
+    }
+
+    return {
+      contributed: true,
+      allPaid: true,
+      payoutSent: true,
+      payoutTo: outcome.payout.recipientUserId,
+      payoutAmount: outcome.payout.totalPayout,
+      nextCycle: outcome.payout.cycle + 1
+    }
   }
 
-  // Update trust scores for all members who paid
-  const paidMembers = members.filter((m: any) => !m.isAvatar && m.hasPaid)
-  for (const m of paidMembers) {
-    await updateTrustScore(m.userId)
-  }
-
+  const realMembers = outcome.members.filter((m: any) => !m.isAvatar)
   return {
     contributed: true,
-    allPaid: true,
-    payoutSent: true,
-    payoutTo: recipient.userId,
-    payoutAmount: totalPayout,
-    nextCycle: group.currentCycle + 1
+    allPaid: false,
+    payoutSent: false,
+    amount: outcome.amount,
+    guaranteeFee: outcome.guaranteeFee,
+    paidCount: realMembers.filter((m: any) => m.hasPaid).length,
+    remainingCount: realMembers.filter((m: any) => !m.hasPaid).length,
+    newBalance: outcome.newBalance
   }
 }
 
@@ -368,11 +364,11 @@ export const getGuaranteedGroupDetails = async (groupId: string) => {
     where: { id: groupId },
     include: {
       members: {
-        include: { user: true },
+        include: { user: { select: { id: true, fullName: true, phone: true, trustScore: true, isVerified: true } } },
         orderBy: { position: 'asc' }
       },
       cycles: { orderBy: { cycleNumber: 'desc' } },
-      defaultRecords: { include: { user: true } }
+      defaultRecords: { include: { user: { select: { id: true, fullName: true, phone: true, trustScore: true, isVerified: true } } } }
     }
   })
 
@@ -409,7 +405,7 @@ export const getAllGuaranteedGroups = async () => {
     where: { isGuaranteed: true, isActive: true },
     include: {
       members: {
-        include: { user: true }
+        include: { user: { select: { id: true, fullName: true, phone: true, trustScore: true, isVerified: true } } }
       }
     },
     orderBy: { createdAt: 'desc' }

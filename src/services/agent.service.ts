@@ -1,4 +1,5 @@
 import { prisma } from '../config/database'
+import { toAmount, creditInTx } from '../utils/money'
 
 // Assign agent role to a user
 export const assignAgentRole = async (userId: string) => {
@@ -52,36 +53,30 @@ export const agentCreditMember = async (data: {
   if (!member.wallet) throw new Error('Member wallet not found')
   if (member.wallet.isLocked) throw new Error('Member wallet is locked')
 
-  if (data.amount <= 0) throw new Error('Amount must be greater than 0')
+  const amount = toAmount(data.amount)
 
-  const newBalance = member.wallet.balance + data.amount
-
-  // Step 3 — Credit member wallet and create transaction
-  const [updatedWallet, transaction] = await prisma.$transaction([
-    prisma.wallet.update({
-      where: { userId: data.memberId },
+  // Step 3 — Credit member wallet and create transaction, atomically
+  const { updatedWallet, transaction } = await prisma.$transaction(async (tx) => {
+    const updatedWallet = await creditInTx(tx, data.memberId, amount, { countAsSaved: true })
+    const transaction = await tx.transaction.create({
       data: {
-        balance: newBalance,
-        totalSaved: member.wallet.totalSaved + data.amount
-      }
-    }),
-    prisma.transaction.create({
-      data: {
-        walletId: member.wallet.id,
+        walletId: updatedWallet.id,
         type: 'CREDIT',
-        amount: data.amount,
-        balance: newBalance,
+        amount,
+        balance: updatedWallet.balance,
         description: `Agent collection by ${agent.fullName} — ${data.description}`,
         reference: `AGENT-${Date.now()}-${data.agentId.slice(0, 8)}`,
         status: 'SUCCESS'
       }
     })
-  ])
+    return { updatedWallet, transaction }
+  })
+  const newBalance = updatedWallet.balance
 
   return {
     agent: agent.fullName,
     member: member.fullName,
-    amount: data.amount,
+    amount,
     newBalance,
     transaction
   }
