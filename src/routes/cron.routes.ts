@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { runAutoDebits } from '../services/savings.service'
 import { runAjoReminders } from '../services/user-ajo.service'
+import { alatpayConfigured, reconcile } from '../services/alatpay.service'
 
 const router = Router()
 
@@ -15,7 +16,16 @@ router.post('/auto-debit', async (req: Request, res: Response) => {
     let reminders = null
     try { reminders = await runAjoReminders() }
     catch (e: any) { console.log('ajo reminders failed:', e?.message) }
-    res.status(200).json({ success: true, data, reminders })
+    // Daily read-only check that every Wema deposit was credited. Never credits by itself.
+    let alatpay = null
+    if (alatpayConfigured()) {
+      try {
+        const r = await reconcile(2)
+        alatpay = { wallets: r.wallets, deposits: r.deposits, notCredited: r.notCredited }
+        if (r.notCredited) console.log('ALATPAY RECONCILE: deposits not credited:', JSON.stringify(r.problems).slice(0, 2000))
+      } catch (e: any) { console.log('alatpay reconcile failed:', e?.message) }
+    }
+    res.status(200).json({ success: true, data, reminders, alatpay })
   } catch (error: any) {
     console.log('cron auto-debit error:', error?.message)
     res.status(500).json({ success: false, message: error?.message })

@@ -30,6 +30,13 @@ model User {
   providusAccountNumber String? @unique
   providusAccountName   String?
   providusReference     String? @unique
+  // Wema ALATPay static wallet (the customer's own Wema account number)
+  alatpayWalletId       String? @unique
+  alatpayAccountNumber  String? @unique
+  alatpayAccountName    String?
+  alatpayPendingId      String?
+  alatpayOtpTrackingId  String?
+  alatpayOtpSentAt      DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -248,4 +255,27 @@ enum Frequency {
   DAILY
   WEEKLY
   MONTHLY
+}
+// Every payment notification received from a bank partner, kept for audit and
+// so the same payment can never be credited twice (provider + eventId is unique).
+model PaymentEvent {
+  id            String   @id @default(uuid())
+  provider      String
+  eventId       String
+  mode          String   @default("live")
+  accountNumber String?
+  amount        Float
+  feeAmount     Float    @default(0)
+  status        String
+  note          String?
+  userId        String?
+  transactionId String?
+  raw           Json
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime?
+  resolvedBy    String?
+
+  @@unique([provider, eventId])
+  @@index([status])
+  @@index([accountNumber])
 }

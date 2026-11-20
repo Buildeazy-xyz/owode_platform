@@ -16,6 +16,7 @@ import faceVerificationRoutes from './routes/face-verification.routes'
 import savingsRoutes from './routes/savings.routes'
 import userAjoRoutes from './routes/user-ajo.routes'
 import cronRoutes from './routes/cron.routes'
+import alatpayRoutes from './routes/alatpay.routes'
 const app = express()
 
 app.use(helmet())
@@ -33,6 +34,9 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }))
+// ALATPay webhook needs the exact raw bytes to check its signature, so it is
+// parsed as raw BEFORE the JSON parser runs (express.json then skips it).
+app.use('/api/alatpay/webhook', express.raw({ type: '*/*', limit: '1mb' }))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
 
@@ -51,6 +55,7 @@ app.use('/api/face', faceVerificationRoutes)
 app.use('/api/savings', savingsRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/user-ajo', userAjoRoutes)
+app.use('/api/alatpay', alatpayRoutes)
 
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() })
