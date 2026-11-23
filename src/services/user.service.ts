@@ -1,6 +1,7 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../config/database'
+import { jwtSecret } from '../config/jwt'
 
 export const registerUser = async (data: {
   fullName: string
@@ -39,7 +40,7 @@ export const registerUser = async (data: {
 
   const token = jwt.sign(
     { userId: user.id, role: user.role },
-    process.env.JWT_SECRET || 'owode_secret',
+    jwtSecret(),
     { expiresIn: '7d' }
   )
 
@@ -73,7 +74,7 @@ export const loginUser = async (data: { phone: string; password: string }) => {
 
   const token = jwt.sign(
     { userId: user.id, role: user.role },
-    process.env.JWT_SECRET || 'owode_secret',
+    jwtSecret(),
     { expiresIn: '7d' }
   )
 

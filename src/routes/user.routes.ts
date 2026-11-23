@@ -5,6 +5,7 @@ import { prisma } from '../config/database'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { tooManyAttempts } from '../utils/pinGuard'
+import { jwtSecret } from '../config/jwt'
 
 const router = Router()
 
@@ -473,7 +474,7 @@ router.post('/admin/verify-otp', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { id: userId } })
     if (!user || user.role !== 'ADMIN') { res.status(403).json({ success: false, message: 'Not authorized' }); return }
 
-    const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET || 'owode_secret', { expiresIn: '7d' })
+    const token = jwt.sign({ userId: user.id, role: user.role }, jwtSecret(), { expiresIn: '7d' })
     res.status(200).json({ success: true, message: 'Login successful', data: {
       token,
       user: { id: user.id, fullName: user.fullName, phone: user.phone, email: user.email, role: user.role }

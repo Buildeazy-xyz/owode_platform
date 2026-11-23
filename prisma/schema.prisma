@@ -96,7 +96,7 @@ enum TransactionStatus {
 
 model AjoGroup {
   id                  String      @id @default(uuid())
-  name                String
+  name                String      @unique // matches the live database (AjoGroup_name_key)
   amount              Float
   frequency           Frequency
   totalMembers        Int

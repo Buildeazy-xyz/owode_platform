@@ -18,6 +18,7 @@ import userAjoRoutes from './routes/user-ajo.routes'
 import cronRoutes from './routes/cron.routes'
 import alatpayRoutes from './routes/alatpay.routes'
 import eeraRoutes from './routes/eera.routes'
+import { checkJwtSecretAtStartup } from './config/jwt'
 const app = express()
 
 app.use(helmet())
@@ -74,6 +75,7 @@ app.get('/health', async (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date().toISOString() })
 })
 
+checkJwtSecretAtStartup()
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
   console.log(`✅ OWODE Server running on port ${PORT}`)

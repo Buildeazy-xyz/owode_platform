@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { prisma } from '../config/database'
+import { jwtSecret } from '../config/jwt'
 
 export const protect = async (req: any, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization
@@ -13,7 +14,7 @@ export const protect = async (req: any, res: Response, next: NextFunction) => {
   const token = authHeader.split(' ')[1]
 
   try {
-    const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'owode_secret')
+    const decoded: any = jwt.verify(token, jwtSecret())
     
     // Always fetch fresh role from database
     const user = await prisma.user.findUnique({
