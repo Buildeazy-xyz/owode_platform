@@ -30,6 +30,15 @@ const cfg = () => ({
 })
 
 export const alatpayMode = () => cfg().mode
+
+// While in TEST mode, only the phone numbers in ALATPAY_PILOT_PHONES see the Wema account feature.
+// Everyone else sees "Bank transfers are coming soon", so a public app release never shows a test flow.
+const last10 = (p: any) => String(p || '').replace(/\D/g, '').slice(-10)
+export const pilotAllowed = (phone?: string | null) => {
+  if (cfg().mode !== 'test') return true
+  const list = String(process.env.ALATPAY_PILOT_PHONES || '').split(',').map(last10).filter((x) => x.length === 10)
+  return list.includes(last10(phone))
+}
 export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId)
 
 const api = () => axios.create({
@@ -44,7 +53,7 @@ const friendly = (e: unknown, fallback: string) => {
   const status = ax?.response?.status
   const msg = ax?.response?.data?.message || ax?.response?.data?.Message
   console.log('alatpay error:', status, typeof msg === 'string' ? msg : '', ax?.message)
-  if (status === 401) return 'Bank service is not available right now. Please try again later.'
+  if (status === 401 || status === 403) return 'Bank service is not available right now. Please try again later.'
   if (typeof msg === 'string' && msg.length < 160) return msg
   return fallback
 }
@@ -55,7 +64,7 @@ export const getAccount = async (userId: string) => {
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (!user) throw new Error('User not found')
   return {
-    available: alatpayConfigured(),
+    available: alatpayConfigured() && pilotAllowed(user.phone),
     mode: alatpayMode(),
     hasBVN: alatpayMode() === 'test' ? false : !!user.bvn,
     account: user.alatpayAccountNumber
@@ -70,6 +79,7 @@ export const startAccount = async (userId: string, bvnIn?: string) => {
   if (!alatpayConfigured()) throw new Error('Bank account numbers are coming soon')
   const user = await prisma.user.findUnique({ where: { id: userId } })
   if (!user) throw new Error('User not found')
+  if (!pilotAllowed(user.phone)) throw new Error('Bank account numbers are coming soon')
   if (user.alatpayAccountNumber) throw new Error('You already have an account number')
 
   // Don't let anyone spam OTPs to a BVN phone.
@@ -123,6 +133,7 @@ export const verifyAccount = async (userId: string, otpIn: string) => {
   if (otp.length < 4 || otp.length > 8) throw new Error('Enter the code we sent you')
 
   const user = await prisma.user.findUnique({ where: { id: userId } })
+  if (user && !pilotAllowed(user.phone)) throw new Error('Bank account numbers are coming soon')
   if (!user) throw new Error('User not found')
   if (user.alatpayAccountNumber)
     return { accountNumber: user.alatpayAccountNumber, accountName: user.alatpayAccountName, bankName: BANK_NAME }
