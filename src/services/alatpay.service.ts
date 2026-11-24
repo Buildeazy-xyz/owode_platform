@@ -3,7 +3,9 @@
 //
 // Env (set on Render, never in code):
 //   ALATPAY_BASE_URL        https://apibox.alatpay.ng
-//   ALATPAY_SECRET_KEY      sent as Ocp-Apim-Subscription-Key
+//   ALATPAY_SECRET_KEY      sent as Ocp-Apim-Subscription-Key (the "primary key")
+//   ALATPAY_LOGIN_EMAIL     ALATPay merchant dashboard login. Wema: wallet calls need a login token
+//   ALATPAY_LOGIN_PASSWORD  (from POST /merchant-onboarding/api/v1/auth/login) as Authorization + the key.
 //   ALATPAY_BUSINESS_ID
 //   ALATPAY_WEBHOOK_SECRET  used to check the x-signature on webhooks
 //   ALATPAY_MODE            "test" or "live"
@@ -21,7 +23,9 @@ const PROVIDER = 'alatpay'
 
 const cfg = () => ({
   baseUrl: (process.env.ALATPAY_BASE_URL || 'https://apibox.alatpay.ng').replace(/\/$/, ''),
-  key: process.env.ALATPAY_SECRET_KEY || '',
+  key: (process.env.ALATPAY_SECRET_KEY || '').trim(),
+  loginEmail: (process.env.ALATPAY_LOGIN_EMAIL || '').trim(),
+  loginPassword: process.env.ALATPAY_LOGIN_PASSWORD || '',
   businessId: process.env.ALATPAY_BUSINESS_ID || '',
   webhookSecret: process.env.ALATPAY_WEBHOOK_SECRET || '',
   mode: (process.env.ALATPAY_MODE || 'live').toLowerCase() === 'test' ? 'test' : 'live',
@@ -39,13 +43,72 @@ export const pilotAllowed = (phone?: string | null) => {
   const list = String(process.env.ALATPAY_PILOT_PHONES || '').split(',').map(last10).filter((x) => x.length === 10)
   return list.includes(last10(phone))
 }
-export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId)
+export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId && cfg().loginEmail && cfg().loginPassword)
 
 const api = () => axios.create({
   baseURL: cfg().baseUrl,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json', 'Ocp-Apim-Subscription-Key': cfg().key },
 })
+
+// ---- merchant login token (Wema, 24 Nov 2026) ----
+// Log in once, keep the access token until shortly before it expires, and log in again if Wema rejects it.
+// The token and password are never logged.
+let session: { token: string; until: number } | null = null
+export const _resetAlatpaySession = () => { session = null }
+
+const TOKEN_KEYS = ['accessToken', 'access_token', 'token', 'jwt', 'authToken', 'idToken']
+const pickToken = (o: any): string => {
+  if (!o || typeof o !== 'object') return ''
+  for (const k of TOKEN_KEYS) if (typeof o[k] === 'string' && o[k].length > 10) return o[k]
+  for (const k of ['data', 'result', 'Data']) { const t = pickToken(o[k]); if (t) return t }
+  return ''
+}
+const tokenFromCookies = (setCookie: any): string => {
+  for (const c of ([] as string[]).concat(setCookie || [])) {
+    const [pair] = String(c).split(';'); const i = pair.indexOf('=')
+    if (i > 0 && /token|access|auth|jwt/i.test(pair.slice(0, i)) && pair.length - i > 11) return decodeURIComponent(pair.slice(i + 1).trim())
+  }
+  return ''
+}
+const expiryOf = (token: string): number => {
+  try {
+    const exp = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).exp
+    if (Number.isFinite(exp)) return exp * 1000
+  } catch {}
+  return Date.now() + 25 * 60_000 // unknown: assume 25 minutes
+}
+
+async function loginToken(): Promise<string> {
+  if (session && Date.now() < session.until - 60_000) return session.token
+  const { loginEmail: email, loginPassword: password } = cfg()
+  if (!email || !password) throw new Error('ALATPay login is not configured')
+  let res
+  try {
+    res = await api().post('/merchant-onboarding/api/v1/auth/login', { email, password })
+  } catch (e) {
+    const ax = e as AxiosError<any>
+    console.log('alatpay login failed:', ax?.response?.status, ax?.message)
+    throw e
+  }
+  const token = tokenFromCookies(res.headers?.['set-cookie']) || pickToken(res.data)
+  if (!token) { console.log('alatpay login: no token in cookies or body'); throw new Error('ALATPay login returned no token') }
+  session = { token: token.replace(/^Bearer\s+/i, ''), until: expiryOf(token.replace(/^Bearer\s+/i, '')) }
+  return session.token
+}
+
+// Wallet calls: key + login token. If Wema says 401/403, log in again once and retry.
+async function walletCall<T>(fn: (client: ReturnType<typeof api>) => Promise<T>): Promise<T> {
+  const withToken = async () => { const c = api(); c.defaults.headers.common.Authorization = `Bearer ${await loginToken()}`; return c }
+  try {
+    return await fn(await withToken())
+  } catch (e) {
+    const status = (e as AxiosError)?.response?.status
+    if (status !== 401 && status !== 403) throw e
+    session = null
+    return await fn(await withToken())
+  }
+}
 
 // Turn an ALATPay error into a short message we can show a customer.
 const friendly = (e: unknown, fallback: string) => {
@@ -102,12 +165,12 @@ export const startAccount = async (userId: string, bvnIn?: string) => {
 
   let data: any
   try {
-    const res = await api().post('/alatpay-wallet/api/v1/staticaccount', {
+    const res = await walletCall((c) => c.post('/alatpay-wallet/api/v1/staticaccount', {
       businessId: cfg().businessId,
       staticWalletType: 1,
       bvn,
       ...(user.email ? { email: user.email } : {}),
-    })
+    }))
     data = res.data?.data ?? res.data
   } catch (e) {
     throw new Error(friendly(e, 'We could not start your account setup. Please try again.'))
@@ -141,12 +204,12 @@ export const verifyAccount = async (userId: string, otpIn: string) => {
 
   let data: any
   try {
-    const res = await api().post('/alatpay-wallet/api/v1/staticaccount/validateAndCreate', {
+    const res = await walletCall((c) => c.post('/alatpay-wallet/api/v1/staticaccount/validateAndCreate', {
       staticWalletId: user.alatpayPendingId,
       businessId: cfg().businessId,
       otp,
       trackingId: user.alatpayOtpTrackingId,
-    })
+    }))
     data = res.data?.data ?? res.data
   } catch (e) {
     throw new Error(friendly(e, 'That code did not work. Check it and try again.'))
@@ -350,9 +413,9 @@ export const reconcile = async (days = 2) => {
   let checked = 0
   for (const u of users) {
     try {
-      const res = await api().get('/alatpay-wallet/api/v1/staticaccount/collectionhistory', {
+      const res = await walletCall((c) => c.get('/alatpay-wallet/api/v1/staticaccount/collectionhistory', {
         params: { StaticAccountId: u.alatpayWalletId, PageNumber: 1, Limit: 50, PageSize: 50 },
-      })
+      }))
       const rows: any[] = res.data?.staticAccountTransactionResponses || res.data?.data?.staticAccountTransactionResponses || []
       for (const r of rows) {
         const when = new Date(r.transactionDate).getTime()
