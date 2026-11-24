@@ -21,7 +21,7 @@ export const sendSMS = async (data: { to: string; message: string }) => {
     })
     const result: any = await response.json()
     if (result.message_id) {
-      console.log(`✅ Termii SMS sent to ${formattedPhone}`)
+      console.log(`✅ Termii SMS sent to ***${String(formattedPhone).slice(-4)}`)
       return { success: true, sid: result.message_id }
     }
     console.log(`📱 Termii SMS failed: ${JSON.stringify(result)}`)

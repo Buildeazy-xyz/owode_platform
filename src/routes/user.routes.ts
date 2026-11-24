@@ -325,7 +325,7 @@ router.post('/send-otp', async (req: Request, res: Response) => {
       if (email) {
         const emailResult = await sendOTPviaEmail(email, otp)
         if (emailResult.success) {
-          console.log(`✅ OTP sent via EMAIL to ${email}: ${otp}`)
+          console.log('✅ OTP sent via email') // never log the code or the address
           res.status(200).json({ success: true, message: `OTP sent to your email ${email}`, channel: 'email' })
           return
         }
@@ -334,7 +334,7 @@ router.post('/send-otp', async (req: Request, res: Response) => {
       res.status(500).json({ success: false, message: 'Could not send OTP. Try again.' })
       return
     }
-    console.log(`✅ OTP sent to ${e164Phone}: ${otp}`)
+    console.log(`✅ OTP sent to ***${String(e164Phone).slice(-4)}`) // never log the code
     res.status(200).json({ success: true, message: `OTP sent to ${e164Phone}` })
   } catch (error: any) {
     console.error('OTP send error:', error)

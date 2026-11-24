@@ -82,6 +82,6 @@ app.listen(PORT, () => {
 })
 
 
-console.log('DATABASE_URL:', process.env.DATABASE_URL?.slice(0, 30))
+console.log('Database configured:', Boolean(process.env.DATABASE_URL))
 
 export default app
