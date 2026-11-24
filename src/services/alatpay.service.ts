@@ -4,8 +4,9 @@
 // Env (set on Render, never in code):
 //   ALATPAY_BASE_URL        https://apibox.alatpay.ng
 //   ALATPAY_SECRET_KEY      sent as Ocp-Apim-Subscription-Key (the "primary key")
-//   ALATPAY_LOGIN_EMAIL     ALATPay merchant dashboard login. Wema: wallet calls need a login token
-//   ALATPAY_LOGIN_PASSWORD  (from POST /merchant-onboarding/api/v1/auth/login) as Authorization + the key.
+//   ALATPAY_LOGIN_EMAIL     LIVE only: ALATPay merchant dashboard login. Wema (24 Nov): in production, wallet
+//   ALATPAY_LOGIN_PASSWORD  calls need a login token as Authorization + the key. In TEST there is no login:
+//                           just the TEST Secret Key as Ocp-Apim-Subscription-Key.
 //   ALATPAY_BUSINESS_ID
 //   ALATPAY_WEBHOOK_SECRET  used to check the x-signature on webhooks
 //   ALATPAY_MODE            "test" or "live"
@@ -26,7 +27,7 @@ const cfg = () => ({
   key: (process.env.ALATPAY_SECRET_KEY || '').trim(),
   loginEmail: (process.env.ALATPAY_LOGIN_EMAIL || '').trim(),
   loginPassword: process.env.ALATPAY_LOGIN_PASSWORD || '',
-  businessId: process.env.ALATPAY_BUSINESS_ID || '',
+  businessId: (process.env.ALATPAY_BUSINESS_ID || '').trim(),
   webhookSecret: process.env.ALATPAY_WEBHOOK_SECRET || '',
   mode: (process.env.ALATPAY_MODE || 'live').toLowerCase() === 'test' ? 'test' : 'live',
   ips: (process.env.ALATPAY_WEBHOOK_IPS || '74.178.162.156').split(',').map(s => s.trim()).filter(Boolean),
@@ -43,7 +44,8 @@ export const pilotAllowed = (phone?: string | null) => {
   const list = String(process.env.ALATPAY_PILOT_PHONES || '').split(',').map(last10).filter((x) => x.length === 10)
   return list.includes(last10(phone))
 }
-export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId && cfg().loginEmail && cfg().loginPassword)
+// Live needs the merchant login too; test only needs the key and business ID.
+export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId && (cfg().mode === 'test' || (cfg().loginEmail && cfg().loginPassword)))
 
 const api = () => axios.create({
   baseURL: cfg().baseUrl,
@@ -99,6 +101,7 @@ async function loginToken(): Promise<string> {
 
 // Wallet calls: key + login token. If Wema says 401/403, log in again once and retry.
 async function walletCall<T>(fn: (client: ReturnType<typeof api>) => Promise<T>): Promise<T> {
+  if (cfg().mode === 'test') return fn(api()) // test environment: key only, no login (Wema, 24 Nov)
   const withToken = async () => { const c = api(); c.defaults.headers.common.Authorization = `Bearer ${await loginToken()}`; return c }
   try {
     return await fn(await withToken())
