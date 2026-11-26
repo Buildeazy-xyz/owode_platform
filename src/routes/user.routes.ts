@@ -4,7 +4,8 @@ import { protect } from '../middleware/auth.middleware'
 import { prisma } from '../config/database'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import { tooManyAttempts } from '../utils/pinGuard'
+import { tooManyAttempts, loginBlockMessage, loginFailed, loginSucceeded, clearLoginLock, clearPinLock, appPinSignedOut, appPinFailed, appPinOk } from '../utils/pinGuard'
+import { sendPush } from '../utils/push'
 import { jwtSecret } from '../config/jwt'
 import { shield, phoneCode } from '../services/shield.service'
 
@@ -296,6 +297,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     await prisma.user.update({ where: { id: user.id }, data: { password: hashed } })
     console.log(`[reset] password changed for ${user.id}`)
     shield('password_changed', { account: user.id })
+    clearLoginLock(phone)
 
     const { sendPush } = await import('../utils/push')
     await sendPush(
@@ -459,18 +461,34 @@ router.post('/login', async (req: Request, res: Response) => {
       return
     }
     const normalizedPhone = normalizePhone(phone)
-    if (tooManyAttempts(`login:${normalizedPhone}`, 10, 15 * 60 * 1000)) {
-      shield('lockout', { account: await acctFor(normalizedPhone), channel: 'login' })
-      res.status(429).json({ success: false, message: 'Too many login attempts. Please wait 15 minutes and try again.' })
+    // 5 wrong passwords → 15 minutes; locked 3 times in a day → must use "Forgot password".
+    const blocked = loginBlockMessage(normalizedPhone)
+    if (blocked || tooManyAttempts(`login:${normalizedPhone}`, 30, 15 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: blocked || 'Too many login attempts. Please wait 15 minutes and try again.' })
       return
     }
     let result: any
     try {
       result = await loginUser({ phone: normalizedPhone, password })
-    } catch (e) {
-      shield('login_failed', { account: await acctFor(normalizedPhone) })
+    } catch (e: any) {
+      const acct = await acctFor(normalizedPhone)
+      shield('login_failed', { account: acct })
+      if (String(e?.message || '').startsWith('Invalid phone or password')) {
+        const r = loginFailed(normalizedPhone)
+        if (r.locked) {
+          shield('lockout', { account: acct, channel: 'login' })
+          const owner = await prisma.user.findUnique({ where: { phone: normalizedPhone }, select: { pushToken: true } }).catch(() => null)
+          if (owner?.pushToken) sendPush([owner.pushToken], 'Sign-in locked', 'Someone entered a wrong password on your OWODE account many times. If this was not you, reset your password and contact support.', { type: 'security' }).catch(() => {})
+          res.status(429).json({ success: false, message: r.message })
+          return
+        }
+        res.status(401).json({ success: false, message: r.message })
+        return
+      }
       throw e
     }
+    loginSucceeded(normalizedPhone)
+    appPinOk(result.user.id)
     shield('login_success', { account: result.user.id })
 
     // Admins get a second factor: password alone is not enough.
@@ -526,6 +544,7 @@ router.post('/transaction-pin/set', protect, async (req: any, res: Response) => 
       return
     }
     const result = await setTransactionPin(req.user.userId, transactionPin, currentPin)
+    clearPinLock(req.user.userId)
     shield('pin_changed', { account: req.user.userId })
     res.status(200).json({ success: true, message: result.message })
   } catch (error: any) {
@@ -541,9 +560,15 @@ router.post('/app-pin/set', protect, async (req: any, res: Response) => {
       res.status(400).json({ success: false, message: 'appPin is required' })
       return
     }
+    if (appPinSignedOut(req.user.userId)) { res.status(401).json({ success: false, forceLogout: true, message: 'Too many wrong app PINs. Please sign in again with your password.' }); return }
     const result = await setAppPin(req.user.userId, appPin, currentPin)
     res.status(200).json({ success: true, message: result.message })
   } catch (error: any) {
+    if (String(error?.message || '').startsWith('Current app PIN is incorrect')) {
+      shield('pin_failed', { account: req.user.userId, channel: 'app' })
+      const r = appPinFailed(req.user.userId)
+      if (r.signedOut) { res.status(401).json({ success: false, forceLogout: true, message: 'Too many wrong app PINs. Please sign in again with your password.' }); return }
+    }
     res.status(400).json({ success: false, message: error.message })
   }
 })
@@ -556,11 +581,22 @@ router.post('/app-pin/verify', protect, async (req: any, res: Response) => {
       res.status(400).json({ success: false, message: 'appPin is required' })
       return
     }
+    // 5 wrong → signed out: the next unlock needs the password.
+    if (appPinSignedOut(req.user.userId)) { res.status(401).json({ success: false, forceLogout: true, message: 'Too many wrong app PINs. Please sign in again with your password.' }); return }
     const result = await verifyAppPin(req.user.userId, appPin)
+    appPinOk(req.user.userId)
     res.status(200).json({ success: true, data: result })
   } catch (error: any) {
+    // 400, not 401: the app treats any 401 as "signed out", so a single wrong PIN used to sign people out.
+    if (!String(error?.message || '').startsWith('Invalid app PIN')) { res.status(400).json({ success: false, message: error.message }); return }
     shield('pin_failed', { account: req.user.userId, channel: 'app' })
-    res.status(401).json({ success: false, message: error.message })
+    const r = appPinFailed(req.user.userId)
+    if (r.signedOut) {
+      shield('lockout', { account: req.user.userId, channel: 'app' })
+      res.status(401).json({ success: false, forceLogout: true, message: 'Too many wrong app PINs. Please sign in again with your password.' })
+      return
+    }
+    res.status(400).json({ success: false, message: `Wrong app PIN. ${r.left} ${r.left === 1 ? 'try' : 'tries'} left.` })
   }
 })
 
@@ -630,6 +666,7 @@ router.post('/transaction-pin/reset', protect, async (req: any, res: Response) =
     delete otpStore[np]
     const hashed = await bcrypt.hash(newPin, 10)
     await prisma.user.update({ where: { id: req.user.userId }, data: { transactionPin: hashed } })
+    clearPinLock(req.user.userId)
     shield('pin_changed', { account: req.user.userId })
     res.status(200).json({ success: true, message: 'Transaction PIN reset successfully' })
   } catch (error: any) {
