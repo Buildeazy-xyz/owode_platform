@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { tooManyAttempts } from '../utils/pinGuard'
 import { jwtSecret } from '../config/jwt'
+import { shield, phoneCode } from '../services/shield.service'
 
 const router = Router()
 
@@ -59,6 +60,13 @@ const sendOTPviaTermii = async (phone: string, message: string): Promise<{ succe
     return { success: false, error: result.message || JSON.stringify(result) }
   } catch (error: any) { return { success: false, error: error.message } }
 }
+
+// For security events: the account's internal id, or a one-way code if the number has no account.
+const acctFor = async (phone: string) => {
+  try { return (await prisma.user.findUnique({ where: { phone }, select: { id: true } }))?.id || phoneCode(phone) } catch { return phoneCode(phone) }
+}
+const reqIp = (req: Request) => String(req.headers['x-forwarded-for'] || req.ip || 'unknown').split(',')[0].trim()
+const reqDevice = (req: Request) => String(req.headers['x-device-id'] || '').slice(0, 64)
 
 const normalizePhone = (phone: string): string => {
   const stripped = phone.replace(/\s+/g, '').trim()
@@ -209,6 +217,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     // 3 per number per hour, 20 per IP per hour
     if (hitLimit(resetByPhone, phone, 3, 3600000) || hitLimit(resetByIp, ip, 20, 3600000)) {
       console.log(`[reset] rate limited ip=${ip}`)
+      shield('lockout', { account: await acctFor(phone), channel: 'reset' })
       await settle(started)
       res.status(429).json({ success: false, message: 'Too many attempts. Please try again later.' })
       return
@@ -217,6 +226,7 @@ router.post('/forgot-password', async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { phone } })
     console.log(`[reset] requested ip=${ip} exists=${!!user}`)
 
+    shield('otp_requested', { account: user ? user.id : phoneCode(phone), channel: 'reset' })
     if (user && user.isActive) {
       const otp = Math.floor(100000 + Math.random() * 900000).toString()
       otpStore[phone] = { otp, expires: Date.now() + 10 * 60 * 1000 }
@@ -269,7 +279,9 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     if (stored.otp !== otp) {
       const cur = resetAttempts[phone] || { tries: 0, until: 0 }
       cur.tries++
-      if (cur.tries >= 5) { cur.until = Date.now() + 3600000; cur.tries = 0; delete otpStore[phone] }
+      const acct = await acctFor(phone)
+      shield('otp_failed', { account: acct, channel: 'reset' })
+      if (cur.tries >= 5) { cur.until = Date.now() + 3600000; cur.tries = 0; delete otpStore[phone]; shield('lockout', { account: acct, channel: 'reset' }) }
       resetAttempts[phone] = cur
       res.status(400).json({ success: false, message: 'Invalid code. Please try again.' })
       return
@@ -283,6 +295,7 @@ router.post('/reset-password', async (req: Request, res: Response) => {
     const hashed = await bcrypt.hash(String(newPassword), 10)
     await prisma.user.update({ where: { id: user.id }, data: { password: hashed } })
     console.log(`[reset] password changed for ${user.id}`)
+    shield('password_changed', { account: user.id })
 
     const { sendPush } = await import('../utils/push')
     await sendPush(
@@ -307,6 +320,13 @@ router.post('/send-otp', async (req: Request, res: Response) => {
       return
     }
     const normalizedPhone = normalizePhone(phone)
+    // Stop bots making us send texts we pay for: 3 codes per number, 5 per phone (device), 60 per network, each hour.
+    const dev = reqDevice(req)
+    if (tooManyAttempts(`send-otp:${normalizedPhone}`, 3, 3600000) || (dev && tooManyAttempts(`send-otp-dev:${dev}`, 5, 3600000)) || tooManyAttempts(`send-otp-ip:${reqIp(req)}`, 60, 3600000)) {
+      shield('lockout', { account: phoneCode(normalizedPhone), channel: 'signup-code' })
+      res.status(429).json({ success: false, message: 'Too many codes requested. Please wait an hour and try again.' })
+      return
+    }
     const existing = await prisma.$queryRaw`
       SELECT id FROM "User" WHERE phone = ${normalizedPhone} LIMIT 1
     ` as any[]
@@ -317,6 +337,7 @@ router.post('/send-otp', async (req: Request, res: Response) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
     const expires = Date.now() + 10 * 60 * 1000
     otpStore[normalizedPhone] = { otp, expires }
+    shield('otp_requested', { account: phoneCode(normalizedPhone), channel: 'signup' })
     const e164Phone = formatE164(phone, dialCode || '+234')
     const termiiPhone = e164Phone.replace(/^\+/, '')
     const smsResult = await sendOTPviaTermii(termiiPhone, `Your OWODE Verification Pin is ${otp}. It expires in 30 minutes. OWODE Digital Services Limited`)
@@ -353,6 +374,7 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
     const normalizedPhone = normalizePhone(phone)
     if (tooManyAttempts(`otp:${normalizedPhone}`, 5, 10 * 60 * 1000)) {
       delete otpStore[normalizedPhone]
+      shield('lockout', { account: phoneCode(normalizedPhone), channel: 'signup-code' })
       res.status(429).json({ success: false, message: 'Too many wrong codes. Please request a new one.' })
       return
     }
@@ -367,10 +389,12 @@ router.post('/verify-otp', async (req: Request, res: Response) => {
       return
     }
     if (stored.otp !== otp) {
+      shield('otp_failed', { account: phoneCode(normalizedPhone), channel: 'signup' })
       res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' })
       return
     }
     delete otpStore[normalizedPhone]
+    shield('otp_verified', { account: phoneCode(normalizedPhone), channel: 'signup' })
     res.status(200).json({ success: true, message: 'Phone number verified successfully!' })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
@@ -413,6 +437,7 @@ router.post('/register', async (req: Request, res: Response) => {
       }
     }
 
+    shield('signup', { account: result.user.id })
     res.status(201).json({ success: true, message: 'User registered successfully', data: result })
   } catch (error: any) {
     console.error('Register error:', error.message)
@@ -435,10 +460,18 @@ router.post('/login', async (req: Request, res: Response) => {
     }
     const normalizedPhone = normalizePhone(phone)
     if (tooManyAttempts(`login:${normalizedPhone}`, 10, 15 * 60 * 1000)) {
+      shield('lockout', { account: await acctFor(normalizedPhone), channel: 'login' })
       res.status(429).json({ success: false, message: 'Too many login attempts. Please wait 15 minutes and try again.' })
       return
     }
-    const result = await loginUser({ phone: normalizedPhone, password })
+    let result: any
+    try {
+      result = await loginUser({ phone: normalizedPhone, password })
+    } catch (e) {
+      shield('login_failed', { account: await acctFor(normalizedPhone) })
+      throw e
+    }
+    shield('login_success', { account: result.user.id })
 
     // Admins get a second factor: password alone is not enough.
     if (result.user.role === 'ADMIN') {
@@ -468,7 +501,7 @@ router.post('/admin/verify-otp', async (req: Request, res: Response) => {
     }
     const pending = adminOtpStore.get(userId)
     if (!pending || pending.expires < Date.now()) { res.status(401).json({ success: false, message: 'Code expired, please log in again' }); return }
-    if (pending.code !== String(code)) { res.status(401).json({ success: false, message: 'Incorrect code' }); return }
+    if (pending.code !== String(code)) { shield('otp_failed', { account: userId, channel: 'admin' }); res.status(401).json({ success: false, message: 'Incorrect code' }); return }
     adminOtpStore.delete(userId)
 
     const user = await prisma.user.findUnique({ where: { id: userId } })
@@ -493,6 +526,7 @@ router.post('/transaction-pin/set', protect, async (req: any, res: Response) => 
       return
     }
     const result = await setTransactionPin(req.user.userId, transactionPin, currentPin)
+    shield('pin_changed', { account: req.user.userId })
     res.status(200).json({ success: true, message: result.message })
   } catch (error: any) {
     res.status(400).json({ success: false, message: error.message })
@@ -525,6 +559,7 @@ router.post('/app-pin/verify', protect, async (req: any, res: Response) => {
     const result = await verifyAppPin(req.user.userId, appPin)
     res.status(200).json({ success: true, data: result })
   } catch (error: any) {
+    shield('pin_failed', { account: req.user.userId, channel: 'app' })
     res.status(401).json({ success: false, message: error.message })
   }
 })
@@ -561,6 +596,7 @@ router.put('/update-email', protect, async (req: any, res: Response) => {
       return
     }
     await prisma.user.update({ where: { id: req.user.userId }, data: { email } })
+    shield('email_changed', { account: req.user.userId })
     res.status(200).json({ success: true, message: 'Email updated successfully!' })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })
@@ -590,10 +626,11 @@ router.post('/transaction-pin/reset', protect, async (req: any, res: Response) =
     const stored = otpStore[np]
     if (!stored) { res.status(400).json({ success: false, message: 'OTP not found. Please request a new one.' }); return }
     if (Date.now() > stored.expires) { delete otpStore[np]; res.status(400).json({ success: false, message: 'OTP has expired. Please request a new one.' }); return }
-    if (stored.otp !== otp) { res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' }); return }
+    if (stored.otp !== otp) { shield('otp_failed', { account: req.user.userId, channel: 'pin-reset' }); res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' }); return }
     delete otpStore[np]
     const hashed = await bcrypt.hash(newPin, 10)
     await prisma.user.update({ where: { id: req.user.userId }, data: { transactionPin: hashed } })
+    shield('pin_changed', { account: req.user.userId })
     res.status(200).json({ success: true, message: 'Transaction PIN reset successfully' })
   } catch (error: any) {
     res.status(500).json({ success: false, message: error.message })

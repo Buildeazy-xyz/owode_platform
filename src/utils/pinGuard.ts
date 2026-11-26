@@ -1,4 +1,5 @@
 import bcrypt from 'bcryptjs'
+import { shield } from '../services/shield.service'
 
 // A 4-digit PIN has only 10,000 combinations. Without a limit, anyone holding
 // a logged-in session could try them all in minutes. Five wrong tries locks
@@ -24,9 +25,11 @@ export const verifyTransactionPinOrThrow = async (
       ? failures[user.id]
       : { tries: 0, until: 0 }
     cur.tries++
+    shield('pin_failed', { account: user.id })
     if (cur.tries >= MAX_TRIES) {
       cur.tries = 0
       cur.until = Date.now() + LOCK_MS
+      shield('lockout', { account: user.id, channel: 'pin' })
     }
     failures[user.id] = cur
     throw new Error('Invalid transaction PIN')

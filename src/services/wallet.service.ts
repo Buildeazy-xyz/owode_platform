@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { notify } from './notification.service'
 import { toAmount, debitInTx, creditInTx } from '../utils/money'
 import { verifyTransactionPinOrThrow } from '../utils/pinGuard'
+import { shield } from './shield.service'
 
 // Get wallet balance
 export const getWalletBalance = async (userId: string) => {
@@ -157,6 +158,7 @@ export const transferFunds = async (
     })
     return { senderNewBalance: s.balance, recipientNewBalance: r.balance }
   })
+  shield('transfer_out', { account: senderId, to_account: recipient.id, amount })
 
   await notify.transactionAlert({
       phone: recipient.phone,

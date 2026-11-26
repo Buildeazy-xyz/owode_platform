@@ -19,6 +19,7 @@ import cronRoutes from './routes/cron.routes'
 import alatpayRoutes from './routes/alatpay.routes'
 import eeraRoutes from './routes/eera.routes'
 import { checkJwtSecretAtStartup } from './config/jwt'
+import { shieldContext } from './services/shield.service'
 const app = express()
 
 app.use(helmet())
@@ -34,13 +35,15 @@ app.use(cors({
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Device-Id']
 }))
 // ALATPay webhook needs the exact raw bytes to check its signature, so it is
 // parsed as raw BEFORE the JSON parser runs (express.json then skips it).
 app.use('/api/alatpay/webhook', express.raw({ type: '*/*', limit: '1mb' }))
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
+// OWODE Shield: remembers each request's network + phone id so security events sent to ÈÈRÀ 07 carry them.
+app.use(shieldContext)
 
 app.use('/api/users', userRoutes)
 app.use('/api/wallet', walletRoutes)
