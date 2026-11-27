@@ -11,6 +11,9 @@ const main = async () => {
   out.ajoGroups = await prisma.ajoGroup.findMany()
   out.ajoMembers = await prisma.ajoMember.findMany()
   out.ajoCycles = await prisma.ajoCycle.findMany()
+  out.defaultRecords = await prisma.defaultRecord.findMany()
+  out.guaranteePools = await prisma.guaranteePool.findMany()
+  out.paymentEvents = await prisma.paymentEvent.findMany()
   const f = `../backups/owode-data-${new Date().toISOString().slice(0,16).replace(/[:T-]/g,'')}.json`
   fs.writeFileSync(f, JSON.stringify(out, null, 2))
   for (const k of Object.keys(out)) console.log(' ', k, out[k].length)

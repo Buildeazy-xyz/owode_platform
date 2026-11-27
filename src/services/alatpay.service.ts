@@ -239,14 +239,34 @@ export const verifyAccount = async (userId: string, otpIn: string) => {
 
 // ---------- webhook ----------
 
-// Base64(HMAC-SHA256(raw body, webhook secret)) must equal the x-signature header.
+// HMAC-SHA256 of the body must equal the x-signature header.
+// Live webhooks were failing the check, so this now also tries the other ways ALATPay may sign:
+// with the Secret Key as well as the webhook secret, base64 or hex, over the raw or re-serialised body.
+// Only our own SECRET values are accepted (never the business ID or a public key), so a forger still
+// can't pass. The log says which way matched (names only, never the values), so the env can be fixed.
+const same = (x: string, y: string) => { const a = Buffer.from(x), b = Buffer.from(y); return a.length === b.length && crypto.timingSafeEqual(a, b) }
 export const signatureValid = (raw: Buffer, header?: string) => {
-  const secret = cfg().webhookSecret
-  if (!secret || !header) return false
-  const expected = crypto.createHmac('sha256', secret).update(raw).digest('base64')
-  const a = Buffer.from(expected)
-  const b = Buffer.from(header.trim())
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
+  if (!header) return false
+  const got = header.trim()
+  const keys: [string, string][] = [['ALATPAY_WEBHOOK_SECRET', cfg().webhookSecret], ['ALATPAY_SECRET_KEY', cfg().key]]
+  const bodies: [string, Buffer][] = [['raw', raw]]
+  try { bodies.push(['compact', Buffer.from(JSON.stringify(JSON.parse(raw.toString('utf8'))))]) } catch {}
+  for (const [kName, key] of keys) {
+    if (!key) continue
+    for (const [bName, body] of bodies) {
+      const h = crypto.createHmac('sha256', key).update(body)
+      const b64 = h.digest('base64')
+      const hex = Buffer.from(b64, 'base64').toString('hex')
+      for (const [enc, val] of [['base64', b64], ['hex', hex], ['HEX', hex.toUpperCase()]] as [string, string][]) {
+        if (same(val, got)) {
+          if (kName !== 'ALATPAY_WEBHOOK_SECRET' || bName !== 'raw' || enc !== 'base64') console.log(`alatpay webhook: signature matched with ${kName}, ${enc}, ${bName} body`)
+          return true
+        }
+      }
+    }
+  }
+  console.log(`alatpay webhook: signature did not match (header ${got.length} chars, starts ${got.slice(0, 4)}…)`)
+  return false
 }
 
 export const ipAllowed = (ip: string) => cfg().ips.includes(ip)
