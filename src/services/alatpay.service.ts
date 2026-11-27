@@ -39,10 +39,12 @@ export const alatpayMode = () => cfg().mode
 // While in TEST mode, only the phone numbers in ALATPAY_PILOT_PHONES see the Wema account feature.
 // Everyone else sees "Bank transfers are coming soon", so a public app release never shows a test flow.
 const last10 = (p: any) => String(p || '').replace(/\D/g, '').slice(-10)
+// While ALATPAY_PILOT_PHONES is set, ONLY those phones get account numbers, in test AND live.
+// Clear it to open account numbers to everyone (live only).
 export const pilotAllowed = (phone?: string | null) => {
-  if (cfg().mode !== 'test') return true
   const list = String(process.env.ALATPAY_PILOT_PHONES || '').split(',').map(last10).filter((x) => x.length === 10)
-  return list.includes(last10(phone))
+  if (list.length) return list.includes(last10(phone))
+  return cfg().mode !== 'test'
 }
 // Live needs the merchant login too; test only needs the key and business ID.
 export const alatpayConfigured = () => Boolean(cfg().key && cfg().businessId && (cfg().mode === 'test' || (cfg().loginEmail && cfg().loginPassword)))
